@@ -269,7 +269,7 @@ fun RoozemanBottomBar() {
         Triple("خانه", Icons.Default.Home, 0),
         Triple("تقویم", Icons.Default.DateRange, 1),
         Triple("اهداف", Icons.Default.Star, 2),
-        Triple("ایده‌ها", Icons.Default.Lightbulb, 3),
+        Triple("ایده‌ها", Icons.Default.Info, 3),
         Triple("بیشتر", Icons.Default.Menu, 4)
     )
     NavigationBar {
