@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -19,6 +20,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.LayoutDirection
 import java.time.LocalDate
 
@@ -50,10 +52,7 @@ val persianWeekdays = listOf(
 )
 val persianWeekdaysShort = listOf("ش", "ی", "د", "س", "چ", "پ", "ج")
 
-data class TaskItem(val title: String, val done: Boolean)
 data class ScheduleItem(val time: String, val label: String)
-data class GoalItem(val title: String, val progress: Float, val daysLeft: Int)
-data class IdeaItem(val title: String, val date: String, val tag: String)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -71,6 +70,14 @@ fun RoozemanApp() {
         colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()
     ) {
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+            val context = LocalContext.current
+            val dbHelper = remember { DbHelper(context) }
+            val db = remember { dbHelper.writableDatabase }
+
+            var tasksVersion by remember { mutableStateOf(0) }
+            var ideasVersion by remember { mutableStateOf(0) }
+            var goalsVersion by remember { mutableStateOf(0) }
+
             var showAddSheet by remember { mutableStateOf(false) }
             var selectedTab by remember { mutableStateOf(0) }
 
@@ -86,16 +93,21 @@ fun RoozemanApp() {
             ) { padding ->
                 Box(modifier = Modifier.padding(padding)) {
                     when (selectedTab) {
-                        0 -> HomeScreen()
+                        0 -> HomeScreen(db, tasksVersion, onTasksChanged = { tasksVersion++ })
                         1 -> CalendarScreen()
-                        2 -> GoalsScreen()
-                        3 -> IdeasScreen()
+                        2 -> GoalsScreen(db, goalsVersion)
+                        3 -> IdeasScreen(db, ideasVersion, onIdeasChanged = { ideasVersion++ })
                         else -> MoreScreen()
                     }
                 }
 
                 if (showAddSheet) {
-                    AddSheet(onDismiss = { showAddSheet = false })
+                    AddSheet(
+                        onDismiss = { showAddSheet = false },
+                        onAddTask = { title -> insertTask(db, title); tasksVersion++ },
+                        onAddIdea = { title -> insertIdea(db, title); ideasVersion++ },
+                        onAddGoal = { title -> insertGoal(db, title); goalsVersion++ }
+                    )
                 }
             }
         }
@@ -108,21 +120,15 @@ fun isSystemInDarkTheme(): Boolean {
 }
 
 @Composable
-fun HomeScreen() {
+fun HomeScreen(db: android.database.sqlite.SQLiteDatabase, version: Int, onTasksChanged: () -> Unit) {
+    val tasks = remember(version) { loadTasks(db) }
+
     val today = LocalDate.now()
     val (jy, jm, jd) = toJalali(today.year, today.monthValue, today.dayOfMonth)
     val weekdayIndex = today.dayOfWeek.value % 7
     val weekdayName = persianWeekdays[weekdayIndex]
     val monthName = persianMonths[jm - 1]
 
-    val tasks = remember {
-        mutableStateListOf(
-            TaskItem("انجام کاری که امروز مهم‌تر از همه است", false),
-            TaskItem("چک کردن ایمیل‌ها", true),
-            TaskItem("۳۰ دقیقه پیاده‌روی", true),
-            TaskItem("مطالعه ۲۰ دقیقه", false)
-        )
-    }
     val schedule = remember {
         listOf(
             ScheduleItem("۰۸:۰۰", "شروع روز"),
@@ -186,14 +192,20 @@ fun HomeScreen() {
         Spacer(modifier = Modifier.height(8.dp))
         Card(shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp)) {
-                tasks.forEachIndexed { index, task ->
+                if (tasks.isEmpty()) {
+                    Text(text = "هنوز کاری ثبت نشده")
+                }
+                tasks.forEach { task ->
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Checkbox(
                             checked = task.done,
-                            onCheckedChange = { checked -> tasks[index] = task.copy(done = checked) }
+                            onCheckedChange = { checked ->
+                                updateTaskDone(db, task.id, checked)
+                                onTasksChanged()
+                            }
                         )
                         Text(text = task.title)
                     }
@@ -222,6 +234,7 @@ fun CalendarScreen() {
     val today = LocalDate.now()
     val (jy, jm, jd) = toJalali(today.year, today.monthValue, today.dayOfMonth)
     val monthName = persianMonths[jm - 1]
+    var selectedDay by remember { mutableStateOf(jd) }
 
     val firstDayGregorian = today.minusDays((jd - 1).toLong())
     var daysInMonth = 0
@@ -268,30 +281,40 @@ fun CalendarScreen() {
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
-                                    .padding(4.dp)
-                                    .height(36.dp),
+                                    .padding(3.dp)
+                                    .height(40.dp)
+                                    .then(
+                                        if (day != null) Modifier.clickable { selectedDay = day } else Modifier
+                                    ),
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (day != null) {
                                     val isToday = day == jd
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .then(
-                                                if (isToday) Modifier
-                                                else Modifier
-                                            ),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        if (isToday) {
+                                    val isSelected = day == selectedDay && !isToday
+                                    when {
+                                        isToday -> {
                                             Card(shape = RoundedCornerShape(10.dp)) {
                                                 Box(
-                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                                    modifier = Modifier
+                                                        .fillMaxSize()
+                                                        .padding(horizontal = 4.dp, vertical = 4.dp),
+                                                    contentAlignment = Alignment.Center
                                                 ) {
                                                     Text(text = day.toString(), fontWeight = FontWeight.Bold)
                                                 }
                                             }
-                                        } else {
+                                        }
+                                        isSelected -> {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(10.dp)),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(text = day.toString())
+                                            }
+                                        }
+                                        else -> {
                                             Text(text = day.toString())
                                         }
                                     }
@@ -303,19 +326,17 @@ fun CalendarScreen() {
             }
         }
 
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(text = "روز انتخاب‌شده: $selectedDay $monthName", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
         Spacer(modifier = Modifier.height(80.dp))
     }
 }
 
 @Composable
-fun GoalsScreen() {
-    val goals = remember {
-        listOf(
-            GoalItem("یادگیری زبان انگلیسی", 0.6f, 12),
-            GoalItem("ورزش منظم", 0.3f, 45),
-            GoalItem("مطالعه ۱۲ کتاب امسال", 0.4f, 90)
-        )
-    }
+fun GoalsScreen(db: android.database.sqlite.SQLiteDatabase, version: Int) {
+    val goals = remember(version) { loadGoals(db) }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -324,6 +345,9 @@ fun GoalsScreen() {
     ) {
         Text(text = "اهداف 🎯", fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Spacer(modifier = Modifier.height(16.dp))
+        if (goals.isEmpty()) {
+            Text(text = "هنوز هدفی ثبت نشده")
+        }
         goals.forEach { goal ->
             Card(shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
@@ -345,14 +369,10 @@ fun GoalsScreen() {
 }
 
 @Composable
-fun IdeasScreen() {
+fun IdeasScreen(db: android.database.sqlite.SQLiteDatabase, version: Int, onIdeasChanged: () -> Unit) {
+    val ideas = remember(version) { loadIdeas(db) }
     var newIdea by remember { mutableStateOf("") }
-    val ideas = remember {
-        mutableStateListOf(
-            IdeaItem("طراحی یک محصول جدید", "۱۳ شهریور", "⭐ مهم"),
-            IdeaItem("پیشنهاد ویژگی جدید برای اپ", "۱۰ شهریور", "💡 ایده")
-        )
-    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -378,7 +398,8 @@ fun IdeasScreen() {
                     }
                     Button(onClick = {
                         if (newIdea.isNotBlank()) {
-                            ideas.add(0, IdeaItem(newIdea, "امروز", "💡 ایده"))
+                            insertIdea(db, newIdea)
+                            onIdeasChanged()
                             newIdea = ""
                         }
                     }) {
@@ -390,6 +411,9 @@ fun IdeasScreen() {
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        if (ideas.isEmpty()) {
+            Text(text = "هنوز ایده‌ای ثبت نشده")
+        }
         ideas.forEach { idea ->
             Card(shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
@@ -512,24 +536,88 @@ fun MoreScreen() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AddSheet(onDismiss: () -> Unit) {
+fun AddSheet(
+    onDismiss: () -> Unit,
+    onAddTask: (String) -> Unit,
+    onAddIdea: (String) -> Unit,
+    onAddGoal: (String) -> Unit
+) {
+    var step by remember { mutableStateOf("menu") }
+    var inputText by remember { mutableStateOf("") }
+
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = "چه چیزی می‌خواهی اضافه کنی؟",
-                fontWeight = FontWeight.Bold,
-                fontSize = 18.sp,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
-            val options = listOf("🕐 برنامه", "📋 کار", "💡 ایده", "🎯 هدف", "📝 یادداشت", "🔥 عادت")
-            options.forEach { option ->
-                Text(
-                    text = option,
-                    fontSize = 16.sp,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)
-                )
+            when (step) {
+                "menu" -> {
+                    Text(
+                        text = "چه چیزی می‌خواهی اضافه کنی؟",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
+                    val options = listOf(
+                        "🕐 برنامه" to "soon",
+                        "📋 کار" to "task",
+                        "💡 ایده" to "idea",
+                        "🎯 هدف" to "goal",
+                        "📝 یادداشت" to "soon",
+                        "🔥 عادت" to "soon"
+                    )
+                    options.forEach { (label, target) ->
+                        Text(
+                            text = label,
+                            fontSize = 16.sp,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { step = target }
+                                .padding(vertical = 12.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(20.dp))
+                }
+                "soon" -> {
+                    Text(text = "این بخش به‌زودی اضافه می‌شود.", fontSize = 16.sp)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(onClick = { step = "menu" }) {
+                        Text("بازگشت")
+                    }
+                    Spacer(modifier = Modifier.height(20.dp))
+                }
+                else -> {
+                    val title = when (step) {
+                        "task" -> "افزودن کار جدید"
+                        "idea" -> "افزودن ایده جدید"
+                        else -> "افزودن هدف جدید"
+                    }
+                    Text(text = title, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = inputText,
+                        onValueChange = { inputText = it },
+                        placeholder = { Text("متن را بنویس...") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(
+                        onClick = {
+                            if (inputText.isNotBlank()) {
+                                when (step) {
+                                    "task" -> onAddTask(inputText)
+                                    "idea" -> onAddIdea(inputText)
+                                    "goal" -> onAddGoal(inputText)
+                                }
+                                inputText = ""
+                                step = "menu"
+                                onDismiss()
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("ثبت")
+                    }
+                    Spacer(modifier = Modifier.height(20.dp))
+                }
             }
-            Spacer(modifier = Modifier.height(20.dp))
         }
     }
 }
