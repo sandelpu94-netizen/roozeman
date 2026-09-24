@@ -1,8 +1,13 @@
 package com.roozeman.app
 
+import android.app.Activity
+import android.content.Intent
 import android.os.Bundle
+import android.speech.RecognizerIntent
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -66,8 +71,15 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RoozemanApp() {
+    var darkModeSetting by remember { mutableStateOf(0) }
+    val isDark = when (darkModeSetting) {
+        1 -> false
+        2 -> true
+        else -> isSystemInDarkTheme()
+    }
+
     MaterialTheme(
-        colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()
+        colorScheme = if (isDark) darkColorScheme() else lightColorScheme()
     ) {
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
             val context = LocalContext.current
@@ -78,9 +90,19 @@ fun RoozemanApp() {
             var ideasVersion by remember { mutableStateOf(0) }
             var goalsVersion by remember { mutableStateOf(0) }
             var habitsVersion by remember { mutableStateOf(0) }
+            var notesVersion by remember { mutableStateOf(0) }
 
             var showAddSheet by remember { mutableStateOf(false) }
             var selectedTab by remember { mutableStateOf(0) }
+
+            val onResetAll = {
+                resetAllData(db)
+                tasksVersion++
+                ideasVersion++
+                goalsVersion++
+                habitsVersion++
+                notesVersion++
+            }
 
             Scaffold(
                 bottomBar = {
@@ -98,7 +120,16 @@ fun RoozemanApp() {
                         1 -> CalendarScreen()
                         2 -> GoalsScreen(db, goalsVersion, onGoalsChanged = { goalsVersion++ })
                         3 -> IdeasScreen(db, ideasVersion, onIdeasChanged = { ideasVersion++ })
-                        else -> MoreScreen(db, habitsVersion, onHabitsChanged = { habitsVersion++ })
+                        else -> MoreScreen(
+                            db = db,
+                            habitsVersion = habitsVersion,
+                            onHabitsChanged = { habitsVersion++ },
+                            notesVersion = notesVersion,
+                            onNotesChanged = { notesVersion++ },
+                            darkModeSetting = darkModeSetting,
+                            onDarkModeChange = { darkModeSetting = it },
+                            onResetAll = onResetAll
+                        )
                     }
                 }
 
@@ -107,7 +138,8 @@ fun RoozemanApp() {
                         onDismiss = { showAddSheet = false },
                         onAddTask = { title -> insertTask(db, title); tasksVersion++ },
                         onAddIdea = { title -> insertIdea(db, title); ideasVersion++ },
-                        onAddGoal = { title -> insertGoal(db, title); goalsVersion++ }
+                        onAddGoal = { title -> insertGoal(db, title); goalsVersion++ },
+                        onAddNote = { text -> insertNote(db, text); notesVersion++ }
                     )
                 }
             }
@@ -392,6 +424,18 @@ fun IdeasScreen(db: android.database.sqlite.SQLiteDatabase, version: Int, onIdea
     val ideas = remember(version) { loadIdeas(db) }
     var newIdea by remember { mutableStateOf("") }
 
+    val speechLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val matches = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+            val text = matches?.firstOrNull()
+            if (text != null) {
+                newIdea = text
+            }
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -412,7 +456,15 @@ fun IdeasScreen(db: android.database.sqlite.SQLiteDatabase, version: Int, onIdea
                 )
                 Spacer(modifier = Modifier.height(10.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    OutlinedButton(onClick = { }) {
+                    OutlinedButton(onClick = {
+                        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+                        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "fa-IR")
+                        try {
+                            speechLauncher.launch(intent)
+                        } catch (e: Exception) {
+                        }
+                    }) {
                         Text("🎙️ ضبط سریع")
                     }
                     Button(onClick = {
@@ -512,30 +564,245 @@ fun HabitsScreen(db: android.database.sqlite.SQLiteDatabase, version: Int, onHab
 }
 
 @Composable
-fun MoreScreen(db: android.database.sqlite.SQLiteDatabase, habitsVersion: Int, onHabitsChanged: () -> Unit) {
-    var openSection by remember { mutableStateOf<String?>(null) }
+fun NotesScreen(db: android.database.sqlite.SQLiteDatabase, version: Int, onNotesChanged: () -> Unit, onBack: () -> Unit) {
+    val notes = remember(version) { loadNotes(db) }
+    var newNote by remember { mutableStateOf("") }
 
-    if (openSection == "عادت‌ها") {
-        HabitsScreen(db, habitsVersion, onHabitsChanged, onBack = { openSection = null })
-        return
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.Default.ArrowBack, contentDescription = "بازگشت")
+            }
+            Text(text = "یادداشت‌ها 📝", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Card(shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                OutlinedTextField(
+                    value = newNote,
+                    onValueChange = { newNote = it },
+                    placeholder = { Text("یادداشت جدید...") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Button(
+                    onClick = {
+                        if (newNote.isNotBlank()) {
+                            insertNote(db, newNote)
+                            onNotesChanged()
+                            newNote = ""
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("ثبت یادداشت")
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        if (notes.isEmpty()) {
+            Text(text = "هنوز یادداشتی ثبت نشده")
+        }
+        notes.forEach { note ->
+            Card(shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(text = note.text, modifier = Modifier.weight(1f))
+                    TextButton(onClick = {
+                        deleteNote(db, note.id)
+                        onNotesChanged()
+                    }) {
+                        Text("✕")
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+        }
+
+        Spacer(modifier = Modifier.height(80.dp))
+    }
+}
+
+@Composable
+fun ReportScreen(db: android.database.sqlite.SQLiteDatabase, onBack: () -> Unit) {
+    val tasks = loadTasks(db)
+    val goals = loadGoals(db)
+    val habits = loadHabits(db)
+    val ideas = loadIdeas(db)
+
+    val doneTasks = tasks.count { it.done }
+    val avgGoalProgress = if (goals.isNotEmpty()) (goals.map { it.progress }.average() * 100).toInt() else 0
+    val bestStreak = habits.maxOfOrNull { it.streak } ?: 0
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.Default.ArrowBack, contentDescription = "بازگشت")
+            }
+            Text(text = "گزارش 📊", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Card(shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(text = "کارها", fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(text = "$doneTasks از ${tasks.size} کار انجام شده")
+            }
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Card(shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(text = "اهداف", fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(text = "${goals.size} هدف ثبت‌شده، میانگین پیشرفت $avgGoalProgress٪")
+            }
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Card(shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(text = "عادت‌ها", fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(text = "بهترین رکورد: $bestStreak روز متوالی")
+            }
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Card(shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(text = "ایده‌ها", fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(text = "${ideas.size} ایده ثبت‌شده")
+            }
+        }
+
+        Spacer(modifier = Modifier.height(80.dp))
+    }
+}
+
+@Composable
+fun SettingsScreen(
+    darkModeSetting: Int,
+    onDarkModeChange: (Int) -> Unit,
+    onResetAll: () -> Unit,
+    onBack: () -> Unit
+) {
+    var showConfirm by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.Default.ArrowBack, contentDescription = "بازگشت")
+            }
+            Text(text = "تنظیمات ⚙️", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(modifier = Modifier.height(20.dp))
+
+        Text(text = "ظاهر برنامه", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Spacer(modifier = Modifier.height(10.dp))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            val options = listOf("خودکار" to 0, "روشن" to 1, "تاریک" to 2)
+            options.forEach { (label, value) ->
+                val selected = darkModeSetting == value
+                Button(
+                    onClick = { onDarkModeChange(value) },
+                    colors = if (selected) ButtonDefaults.buttonColors() else ButtonDefaults.outlinedButtonColors()
+                ) {
+                    Text(label)
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        Text(text = "داده‌ها", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Spacer(modifier = Modifier.height(10.dp))
+        Button(
+            onClick = { showConfirm = true },
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+        ) {
+            Text("پاک کردن همه اطلاعات")
+        }
+
+        Spacer(modifier = Modifier.height(80.dp))
     }
 
-    if (openSection != null) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { openSection = null }) {
-                    Icon(Icons.Default.ArrowBack, contentDescription = "بازگشت")
+    if (showConfirm) {
+        AlertDialog(
+            onDismissRequest = { showConfirm = false },
+            title = { Text("پاک کردن اطلاعات") },
+            text = { Text("همه کارها، ایده‌ها، اهداف و یادداشت‌ها پاک می‌شوند. مطمئنی؟") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onResetAll()
+                    showConfirm = false
+                }) {
+                    Text("بله، پاک کن")
                 }
-                Text(text = openSection ?: "", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfirm = false }) {
+                    Text("انصراف")
+                }
             }
-            Spacer(modifier = Modifier.height(24.dp))
-            Text(text = "این بخش به‌زودی اضافه می‌شود.")
+        )
+    }
+}
+
+@Composable
+fun MoreScreen(
+    db: android.database.sqlite.SQLiteDatabase,
+    habitsVersion: Int,
+    onHabitsChanged: () -> Unit,
+    notesVersion: Int,
+    onNotesChanged: () -> Unit,
+    darkModeSetting: Int,
+    onDarkModeChange: (Int) -> Unit,
+    onResetAll: () -> Unit
+) {
+    var openSection by remember { mutableStateOf<String?>(null) }
+
+    when (openSection) {
+        "عادت‌ها" -> {
+            HabitsScreen(db, habitsVersion, onHabitsChanged, onBack = { openSection = null })
+            return
         }
-        return
+        "گزارش" -> {
+            ReportScreen(db, onBack = { openSection = null })
+            return
+        }
+        "یادداشت‌ها" -> {
+            NotesScreen(db, notesVersion, onNotesChanged, onBack = { openSection = null })
+            return
+        }
+        "تنظیمات" -> {
+            SettingsScreen(darkModeSetting, onDarkModeChange, onResetAll, onBack = { openSection = null })
+            return
+        }
     }
 
     val menuItems = listOf("🔥 عادت‌ها", "📊 گزارش", "📝 یادداشت‌ها", "⚙️ تنظیمات")
@@ -575,7 +842,8 @@ fun AddSheet(
     onDismiss: () -> Unit,
     onAddTask: (String) -> Unit,
     onAddIdea: (String) -> Unit,
-    onAddGoal: (String) -> Unit
+    onAddGoal: (String) -> Unit,
+    onAddNote: (String) -> Unit
 ) {
     var step by remember { mutableStateOf("menu") }
     var inputText by remember { mutableStateOf("") }
@@ -595,7 +863,7 @@ fun AddSheet(
                         "📋 کار" to "task",
                         "💡 ایده" to "idea",
                         "🎯 هدف" to "goal",
-                        "📝 یادداشت" to "soon",
+                        "📝 یادداشت" to "note",
                         "🔥 عادت" to "soon"
                     )
                     options.forEach { (label, target) ->
@@ -622,6 +890,7 @@ fun AddSheet(
                     val title = when (step) {
                         "task" -> "افزودن کار جدید"
                         "idea" -> "افزودن ایده جدید"
+                        "note" -> "افزودن یادداشت جدید"
                         else -> "افزودن هدف جدید"
                     }
                     Text(text = title, fontWeight = FontWeight.Bold, fontSize = 18.sp)
@@ -640,6 +909,7 @@ fun AddSheet(
                                     "task" -> onAddTask(inputText)
                                     "idea" -> onAddIdea(inputText)
                                     "goal" -> onAddGoal(inputText)
+                                    "note" -> onAddNote(inputText)
                                 }
                                 inputText = ""
                                 step = "menu"

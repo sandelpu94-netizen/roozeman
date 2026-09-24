@@ -9,13 +9,15 @@ data class TaskItem(val id: Long, val title: String, val done: Boolean)
 data class IdeaItem(val id: Long, val title: String, val date: String, val tag: String)
 data class GoalItem(val id: Long, val title: String, val progress: Float, val daysLeft: Int)
 data class HabitItem(val id: Long, val title: String, val days: List<Boolean>, val streak: Int)
+data class NoteItem(val id: Long, val text: String)
 
-class DbHelper(context: Context) : SQLiteOpenHelper(context, "roozeman.db", null, 2) {
+class DbHelper(context: Context) : SQLiteOpenHelper(context, "roozeman.db", null, 3) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, done INTEGER)")
         db.execSQL("CREATE TABLE ideas (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, date TEXT, tag TEXT)")
         db.execSQL("CREATE TABLE goals (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, progress REAL, daysLeft INTEGER)")
         db.execSQL("CREATE TABLE habits (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, d0 INTEGER, d1 INTEGER, d2 INTEGER, d3 INTEGER, d4 INTEGER, d5 INTEGER, d6 INTEGER, streak INTEGER)")
+        db.execSQL("CREATE TABLE notes (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT)")
 
         db.execSQL("INSERT INTO tasks (title, done) VALUES ('انجام کاری که امروز مهم‌تر از همه است', 0)")
         db.execSQL("INSERT INTO tasks (title, done) VALUES ('چک کردن ایمیل‌ها', 1)")
@@ -42,6 +44,9 @@ class DbHelper(context: Context) : SQLiteOpenHelper(context, "roozeman.db", null
             if (count == 0) {
                 db.execSQL("INSERT INTO habits (title, d0, d1, d2, d3, d4, d5, d6, streak) VALUES ('ورزش', 1, 1, 0, 1, 0, 0, 0, 12)")
             }
+        }
+        if (oldVersion < 3) {
+            db.execSQL("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT)")
         }
     }
 }
@@ -131,4 +136,32 @@ fun loadHabits(db: SQLiteDatabase): List<HabitItem> {
 fun updateHabitDay(db: SQLiteDatabase, id: Long, dayIndex: Int, value: Boolean) {
     val col = "d" + dayIndex.toString()
     db.execSQL("UPDATE habits SET " + col + " = ? WHERE id = ?", arrayOf(if (value) 1 else 0, id))
+}
+
+fun loadNotes(db: SQLiteDatabase): List<NoteItem> {
+    val list = mutableListOf<NoteItem>()
+    val cursor = db.rawQuery("SELECT id, text FROM notes ORDER BY id DESC", null)
+    while (cursor.moveToNext()) {
+        list.add(NoteItem(cursor.getLong(0), cursor.getString(1)))
+    }
+    cursor.close()
+    return list
+}
+
+fun insertNote(db: SQLiteDatabase, text: String) {
+    val values = ContentValues()
+    values.put("text", text)
+    db.insert("notes", null, values)
+}
+
+fun deleteNote(db: SQLiteDatabase, id: Long) {
+    db.delete("notes", "id = ?", arrayOf(id.toString()))
+}
+
+fun resetAllData(db: SQLiteDatabase) {
+    db.execSQL("DELETE FROM tasks")
+    db.execSQL("DELETE FROM ideas")
+    db.execSQL("DELETE FROM goals")
+    db.execSQL("DELETE FROM notes")
+    db.execSQL("UPDATE habits SET d0=0, d1=0, d2=0, d3=0, d4=0, d5=0, d6=0, streak=0")
 }
