@@ -77,6 +77,7 @@ fun RoozemanApp() {
             var tasksVersion by remember { mutableStateOf(0) }
             var ideasVersion by remember { mutableStateOf(0) }
             var goalsVersion by remember { mutableStateOf(0) }
+            var habitsVersion by remember { mutableStateOf(0) }
 
             var showAddSheet by remember { mutableStateOf(false) }
             var selectedTab by remember { mutableStateOf(0) }
@@ -95,9 +96,9 @@ fun RoozemanApp() {
                     when (selectedTab) {
                         0 -> HomeScreen(db, tasksVersion, onTasksChanged = { tasksVersion++ })
                         1 -> CalendarScreen()
-                        2 -> GoalsScreen(db, goalsVersion)
+                        2 -> GoalsScreen(db, goalsVersion, onGoalsChanged = { goalsVersion++ })
                         3 -> IdeasScreen(db, ideasVersion, onIdeasChanged = { ideasVersion++ })
-                        else -> MoreScreen()
+                        else -> MoreScreen(db, habitsVersion, onHabitsChanged = { habitsVersion++ })
                     }
                 }
 
@@ -207,7 +208,13 @@ fun HomeScreen(db: android.database.sqlite.SQLiteDatabase, version: Int, onTasks
                                 onTasksChanged()
                             }
                         )
-                        Text(text = task.title)
+                        Text(text = task.title, modifier = Modifier.weight(1f))
+                        TextButton(onClick = {
+                            deleteTask(db, task.id)
+                            onTasksChanged()
+                        }) {
+                            Text("✕")
+                        }
                     }
                 }
             }
@@ -334,7 +341,7 @@ fun CalendarScreen() {
 }
 
 @Composable
-fun GoalsScreen(db: android.database.sqlite.SQLiteDatabase, version: Int) {
+fun GoalsScreen(db: android.database.sqlite.SQLiteDatabase, version: Int, onGoalsChanged: () -> Unit) {
     val goals = remember(version) { loadGoals(db) }
 
     Column(
@@ -351,7 +358,19 @@ fun GoalsScreen(db: android.database.sqlite.SQLiteDatabase, version: Int) {
         goals.forEach { goal ->
             Card(shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text(text = "🎯 ${goal.title}", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(text = "🎯 ${goal.title}", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        TextButton(onClick = {
+                            deleteGoal(db, goal.id)
+                            onGoalsChanged()
+                        }) {
+                            Text("✕")
+                        }
+                    }
                     Spacer(modifier = Modifier.height(8.dp))
                     LinearProgressIndicator(
                         progress = { goal.progress },
@@ -417,7 +436,19 @@ fun IdeasScreen(db: android.database.sqlite.SQLiteDatabase, version: Int, onIdea
         ideas.forEach { idea ->
             Card(shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text(text = "💡 ${idea.title}", fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(text = "💡 ${idea.title}", fontWeight = FontWeight.Bold)
+                        TextButton(onClick = {
+                            deleteIdea(db, idea.id)
+                            onIdeasChanged()
+                        }) {
+                            Text("✕")
+                        }
+                    }
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(text = "${idea.date}   ${idea.tag}", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -430,8 +461,8 @@ fun IdeasScreen(db: android.database.sqlite.SQLiteDatabase, version: Int, onIdea
 }
 
 @Composable
-fun HabitsScreen(onBack: () -> Unit) {
-    val habitDays = remember { mutableStateListOf(true, true, false, true, false, false, false) }
+fun HabitsScreen(db: android.database.sqlite.SQLiteDatabase, version: Int, onHabitsChanged: () -> Unit, onBack: () -> Unit) {
+    val habits = remember(version) { loadHabits(db) }
     val dayLabels = listOf("شنبه", "یکشنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه")
 
     Column(
@@ -448,40 +479,44 @@ fun HabitsScreen(onBack: () -> Unit) {
         }
         Spacer(modifier = Modifier.height(16.dp))
 
-        Card(shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text(text = "ورزش", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                Spacer(modifier = Modifier.height(10.dp))
-                Row(modifier = Modifier.fillMaxWidth()) {
-                    dayLabels.forEachIndexed { index, label ->
-                        Column(
-                            modifier = Modifier.weight(1f),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(text = label.take(1), fontSize = 11.sp)
-                            Checkbox(
-                                checked = habitDays[index],
-                                onCheckedChange = { habitDays[index] = it }
-                            )
+        habits.forEach { habit ->
+            Card(shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(text = habit.title, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        dayLabels.forEachIndexed { index, label ->
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(text = label.take(1), fontSize = 11.sp)
+                                Checkbox(
+                                    checked = habit.days[index],
+                                    onCheckedChange = { checked ->
+                                        updateHabitDay(db, habit.id, index, checked)
+                                        onHabitsChanged()
+                                    }
+                                )
+                            }
                         }
                     }
                 }
             }
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(text = "🔥 " + habit.streak.toString() + " روز متوالی", fontSize = 20.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
         }
-
-        Spacer(modifier = Modifier.height(20.dp))
-        Text(text = "🔥 ۱۲ روز متوالی", fontSize = 20.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
 
         Spacer(modifier = Modifier.height(80.dp))
     }
 }
 
 @Composable
-fun MoreScreen() {
+fun MoreScreen(db: android.database.sqlite.SQLiteDatabase, habitsVersion: Int, onHabitsChanged: () -> Unit) {
     var openSection by remember { mutableStateOf<String?>(null) }
 
     if (openSection == "عادت‌ها") {
-        HabitsScreen(onBack = { openSection = null })
+        HabitsScreen(db, habitsVersion, onHabitsChanged, onBack = { openSection = null })
         return
     }
 
