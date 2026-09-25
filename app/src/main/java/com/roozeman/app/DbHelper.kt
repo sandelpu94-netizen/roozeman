@@ -3,75 +3,124 @@ package com.roozeman.app
 import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteException
 import android.database.sqlite.SQLiteOpenHelper
+import java.time.LocalDate
 
-data class TaskItem(val id: Long, val title: String, val done: Boolean)
+data class TaskItem(
+    val id: Long,
+    val title: String,
+    val done: Boolean,
+    val recurrence: String,
+    val reminderHour: Int?,
+    val reminderMinute: Int?
+)
 data class IdeaItem(val id: Long, val title: String, val date: String, val tag: String)
-data class GoalItem(val id: Long, val title: String, val progress: Float, val daysLeft: Int)
+data class GoalItem(val id: Long, val title: String, val progress: Float, val daysLeft: Int, val recurrence: String)
 data class HabitItem(val id: Long, val title: String, val days: List<Boolean>, val streak: Int)
 data class NoteItem(val id: Long, val text: String)
 
-class DbHelper(context: Context) : SQLiteOpenHelper(context, "roozeman.db", null, 3) {
+class DbHelper(context: Context) : SQLiteOpenHelper(context, "roozeman.db", null, 4) {
     override fun onCreate(db: SQLiteDatabase) {
-        db.execSQL("CREATE TABLE tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, done INTEGER)")
+        db.execSQL("CREATE TABLE tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, done INTEGER, recurrence TEXT DEFAULT 'none', reminderHour INTEGER, reminderMinute INTEGER)")
         db.execSQL("CREATE TABLE ideas (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, date TEXT, tag TEXT)")
-        db.execSQL("CREATE TABLE goals (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, progress REAL, daysLeft INTEGER)")
+        db.execSQL("CREATE TABLE goals (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, progress REAL, daysLeft INTEGER, recurrence TEXT DEFAULT 'none')")
         db.execSQL("CREATE TABLE habits (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, d0 INTEGER, d1 INTEGER, d2 INTEGER, d3 INTEGER, d4 INTEGER, d5 INTEGER, d6 INTEGER, streak INTEGER)")
+        db.execSQL("CREATE TABLE habit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, habit_id INTEGER, date TEXT, done INTEGER)")
         db.execSQL("CREATE TABLE notes (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT)")
 
-        db.execSQL("INSERT INTO tasks (title, done) VALUES ('انجام کاری که امروز مهم‌تر از همه است', 0)")
-        db.execSQL("INSERT INTO tasks (title, done) VALUES ('چک کردن ایمیل‌ها', 1)")
-        db.execSQL("INSERT INTO tasks (title, done) VALUES ('۳۰ دقیقه پیاده‌روی', 1)")
-        db.execSQL("INSERT INTO tasks (title, done) VALUES ('مطالعه ۲۰ دقیقه', 0)")
+        db.execSQL("INSERT INTO tasks (title, done, recurrence) VALUES ('انجام کاری که امروز مهم‌تر از همه است', 0, 'none')")
+        db.execSQL("INSERT INTO tasks (title, done, recurrence) VALUES ('چک کردن ایمیل‌ها', 1, 'none')")
+        db.execSQL("INSERT INTO tasks (title, done, recurrence) VALUES ('۳۰ دقیقه پیاده‌روی', 1, 'none')")
+        db.execSQL("INSERT INTO tasks (title, done, recurrence) VALUES ('مطالعه ۲۰ دقیقه', 0, 'none')")
 
-        db.execSQL("INSERT INTO goals (title, progress, daysLeft) VALUES ('یادگیری زبان انگلیسی', 0.6, 12)")
-        db.execSQL("INSERT INTO goals (title, progress, daysLeft) VALUES ('ورزش منظم', 0.3, 45)")
-        db.execSQL("INSERT INTO goals (title, progress, daysLeft) VALUES ('مطالعه ۱۲ کتاب امسال', 0.4, 90)")
+        db.execSQL("INSERT INTO goals (title, progress, daysLeft, recurrence) VALUES ('یادگیری زبان انگلیسی', 0.6, 12, 'none')")
+        db.execSQL("INSERT INTO goals (title, progress, daysLeft, recurrence) VALUES ('ورزش منظم', 0.3, 45, 'monthly')")
+        db.execSQL("INSERT INTO goals (title, progress, daysLeft, recurrence) VALUES ('مطالعه ۱۲ کتاب امسال', 0.4, 90, 'none')")
 
         db.execSQL("INSERT INTO ideas (title, date, tag) VALUES ('طراحی یک محصول جدید', '۱۳ شهریور', '⭐ مهم')")
         db.execSQL("INSERT INTO ideas (title, date, tag) VALUES ('پیشنهاد ویژگی جدید برای اپ', '۱۰ شهریور', '💡 ایده')")
 
-        db.execSQL("INSERT INTO habits (title, d0, d1, d2, d3, d4, d5, d6, streak) VALUES ('ورزش', 1, 1, 0, 1, 0, 0, 0, 12)")
+        db.execSQL("INSERT INTO habits (title, d0, d1, d2, d3, d4, d5, d6, streak) VALUES ('ورزش', 0, 0, 0, 0, 0, 0, 0, 0)")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 2) {
             db.execSQL("CREATE TABLE IF NOT EXISTS habits (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, d0 INTEGER, d1 INTEGER, d2 INTEGER, d3 INTEGER, d4 INTEGER, d5 INTEGER, d6 INTEGER, streak INTEGER)")
-            val cursor = db.rawQuery("SELECT COUNT(*) FROM habits", null)
-            cursor.moveToFirst()
-            val count = cursor.getInt(0)
-            cursor.close()
-            if (count == 0) {
-                db.execSQL("INSERT INTO habits (title, d0, d1, d2, d3, d4, d5, d6, streak) VALUES ('ورزش', 1, 1, 0, 1, 0, 0, 0, 12)")
-            }
         }
         if (oldVersion < 3) {
             db.execSQL("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT)")
+        }
+        if (oldVersion < 4) {
+            safeAlter(db, "ALTER TABLE tasks ADD COLUMN recurrence TEXT DEFAULT 'none'")
+            safeAlter(db, "ALTER TABLE tasks ADD COLUMN reminderHour INTEGER")
+            safeAlter(db, "ALTER TABLE tasks ADD COLUMN reminderMinute INTEGER")
+            safeAlter(db, "ALTER TABLE goals ADD COLUMN recurrence TEXT DEFAULT 'none'")
+            db.execSQL("CREATE TABLE IF NOT EXISTS habit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, habit_id INTEGER, date TEXT, done INTEGER)")
+        }
+    }
+
+    private fun safeAlter(db: SQLiteDatabase, sql: String) {
+        try {
+            db.execSQL(sql)
+        } catch (e: SQLiteException) {
         }
     }
 }
 
 fun loadTasks(db: SQLiteDatabase): List<TaskItem> {
     val list = mutableListOf<TaskItem>()
-    val cursor = db.rawQuery("SELECT id, title, done FROM tasks ORDER BY id ASC", null)
+    val cursor = db.rawQuery("SELECT id, title, done, recurrence, reminderHour, reminderMinute FROM tasks ORDER BY id ASC", null)
     while (cursor.moveToNext()) {
-        list.add(TaskItem(cursor.getLong(0), cursor.getString(1), cursor.getInt(2) == 1))
+        list.add(
+            TaskItem(
+                cursor.getLong(0),
+                cursor.getString(1),
+                cursor.getInt(2) == 1,
+                cursor.getString(3) ?: "none",
+                if (cursor.isNull(4)) null else cursor.getInt(4),
+                if (cursor.isNull(5)) null else cursor.getInt(5)
+            )
+        )
     }
     cursor.close()
     return list
 }
 
-fun insertTask(db: SQLiteDatabase, title: String) {
+fun insertTask(db: SQLiteDatabase, title: String, recurrence: String = "none", reminderHour: Int? = null, reminderMinute: Int? = null): Long {
     val values = ContentValues()
     values.put("title", title)
     values.put("done", 0)
-    db.insert("tasks", null, values)
+    values.put("recurrence", recurrence)
+    if (reminderHour != null) values.put("reminderHour", reminderHour) else values.putNull("reminderHour")
+    if (reminderMinute != null) values.put("reminderMinute", reminderMinute) else values.putNull("reminderMinute")
+    return db.insert("tasks", null, values)
 }
 
-fun updateTaskDone(db: SQLiteDatabase, id: Long, done: Boolean) {
+fun updateTaskDone(db: SQLiteDatabase, id: Long, done: Boolean): Long? {
     val values = ContentValues()
     values.put("done", if (done) 1 else 0)
     db.update("tasks", values, "id = ?", arrayOf(id.toString()))
+
+    if (!done) return null
+
+    val cursor = db.rawQuery("SELECT title, recurrence, reminderHour, reminderMinute FROM tasks WHERE id=?", arrayOf(id.toString()))
+    var newId: Long? = null
+    if (cursor.moveToFirst()) {
+        val recurrence = cursor.getString(1) ?: "none"
+        if (recurrence == "monthly") {
+            val title = cursor.getString(0)
+            val rh = if (cursor.isNull(2)) null else cursor.getInt(2)
+            val rm = if (cursor.isNull(3)) null else cursor.getInt(3)
+            cursor.close()
+            newId = insertTask(db, title, recurrence, rh, rm)
+        } else {
+            cursor.close()
+        }
+    } else {
+        cursor.close()
+    }
+    return newId
 }
 
 fun deleteTask(db: SQLiteDatabase, id: Long) {
@@ -102,19 +151,25 @@ fun deleteIdea(db: SQLiteDatabase, id: Long) {
 
 fun loadGoals(db: SQLiteDatabase): List<GoalItem> {
     val list = mutableListOf<GoalItem>()
-    val cursor = db.rawQuery("SELECT id, title, progress, daysLeft FROM goals ORDER BY id ASC", null)
+    val cursor = db.rawQuery("SELECT id, title, progress, daysLeft, recurrence FROM goals ORDER BY id ASC", null)
     while (cursor.moveToNext()) {
-        list.add(GoalItem(cursor.getLong(0), cursor.getString(1), cursor.getFloat(2), cursor.getInt(3)))
+        list.add(
+            GoalItem(
+                cursor.getLong(0), cursor.getString(1), cursor.getFloat(2),
+                cursor.getInt(3), cursor.getString(4) ?: "none"
+            )
+        )
     }
     cursor.close()
     return list
 }
 
-fun insertGoal(db: SQLiteDatabase, title: String) {
+fun insertGoal(db: SQLiteDatabase, title: String, recurrence: String = "none") {
     val values = ContentValues()
     values.put("title", title)
     values.put("progress", 0f)
     values.put("daysLeft", 0)
+    values.put("recurrence", recurrence)
     db.insert("goals", null, values)
 }
 
@@ -122,20 +177,76 @@ fun deleteGoal(db: SQLiteDatabase, id: Long) {
     db.delete("goals", "id = ?", arrayOf(id.toString()))
 }
 
+private fun todayPersianWeekIndex(): Int {
+    return (LocalDate.now().dayOfWeek.value + 1) % 7
+}
+
 fun loadHabits(db: SQLiteDatabase): List<HabitItem> {
     val list = mutableListOf<HabitItem>()
-    val cursor = db.rawQuery("SELECT id, title, d0, d1, d2, d3, d4, d5, d6, streak FROM habits ORDER BY id ASC", null)
-    while (cursor.moveToNext()) {
-        val days = (0..6).map { cursor.getInt(2 + it) == 1 }
-        list.add(HabitItem(cursor.getLong(0), cursor.getString(1), days, cursor.getInt(9)))
-    }
+    val cursor = db.rawQuery("SELECT id, title FROM habits ORDER BY id ASC", null)
+    val idsTitles = mutableListOf<Pair<Long, String>>()
+    while (cursor.moveToNext()) idsTitles.add(cursor.getLong(0) to cursor.getString(1))
     cursor.close()
+
+    val today = LocalDate.now()
+    val todayIdx = todayPersianWeekIndex()
+
+    for ((id, title) in idsTitles) {
+        val days = (0..6).map { i ->
+            val date = today.minusDays((todayIdx - i).toLong())
+            isHabitDoneOnDate(db, id, date.toString())
+        }
+        val streak = computeHabitStreak(db, id)
+        list.add(HabitItem(id, title, days, streak))
+    }
     return list
 }
 
+fun isHabitDoneOnDate(db: SQLiteDatabase, habitId: Long, date: String): Boolean {
+    val cursor = db.rawQuery("SELECT done FROM habit_logs WHERE habit_id=? AND date=?", arrayOf(habitId.toString(), date))
+    val result = if (cursor.moveToFirst()) cursor.getInt(0) == 1 else false
+    cursor.close()
+    return result
+}
+
 fun updateHabitDay(db: SQLiteDatabase, id: Long, dayIndex: Int, value: Boolean) {
-    val col = "d" + dayIndex.toString()
-    db.execSQL("UPDATE habits SET " + col + " = ? WHERE id = ?", arrayOf(if (value) 1 else 0, id))
+    val today = LocalDate.now()
+    val todayIdx = todayPersianWeekIndex()
+    val date = today.minusDays((todayIdx - dayIndex).toLong()).toString()
+
+    val cursor = db.rawQuery("SELECT id FROM habit_logs WHERE habit_id=? AND date=?", arrayOf(id.toString(), date))
+    if (cursor.moveToFirst()) {
+        val logId = cursor.getLong(0)
+        cursor.close()
+        db.execSQL("UPDATE habit_logs SET done=? WHERE id=?", arrayOf(if (value) 1 else 0, logId))
+    } else {
+        cursor.close()
+        val values = ContentValues()
+        values.put("habit_id", id)
+        values.put("date", date)
+        values.put("done", if (value) 1 else 0)
+        db.insert("habit_logs", null, values)
+    }
+}
+
+fun computeHabitStreak(db: SQLiteDatabase, habitId: Long): Int {
+    val cursor = db.rawQuery("SELECT date, done FROM habit_logs WHERE habit_id=?", arrayOf(habitId.toString()))
+    val map = HashMap<String, Boolean>()
+    while (cursor.moveToNext()) {
+        map[cursor.getString(0)] = cursor.getInt(1) == 1
+    }
+    cursor.close()
+
+    var streak = 0
+    var d = LocalDate.now()
+    if (map[d.toString()] != true) {
+        d = d.minusDays(1)
+    }
+    while (map[d.toString()] == true) {
+        streak++
+        d = d.minusDays(1)
+    }
+    return streak
 }
 
 fun loadNotes(db: SQLiteDatabase): List<NoteItem> {
@@ -163,5 +274,6 @@ fun resetAllData(db: SQLiteDatabase) {
     db.execSQL("DELETE FROM ideas")
     db.execSQL("DELETE FROM goals")
     db.execSQL("DELETE FROM notes")
+    db.execSQL("DELETE FROM habit_logs")
     db.execSQL("UPDATE habits SET d0=0, d1=0, d2=0, d3=0, d4=0, d5=0, d6=0, streak=0")
 }
