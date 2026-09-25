@@ -1,13 +1,16 @@
 package com.roozeman.app
 
 import android.app.Activity
+import android.app.TimePickerDialog
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.speech.RecognizerIntent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -20,6 +23,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -28,6 +32,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.LayoutDirection
 import java.time.LocalDate
+import java.util.Calendar
 
 fun toJalali(gyIn: Int, gm: Int, gd: Int): Triple<Int, Int, Int> {
     val gDaysInMonth = intArrayOf(0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334)
@@ -59,6 +64,24 @@ val persianWeekdaysShort = listOf("ش", "ی", "د", "س", "چ", "پ", "ج")
 
 data class ScheduleItem(val time: String, val label: String)
 
+private val RoozemanLightColors = lightColorScheme(
+    primary = Color(0xFF6750A4),
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFEADDFF),
+    secondary = Color(0xFF03A9A4),
+    background = Color(0xFFFAF8FC),
+    surface = Color(0xFFFFFFFF),
+    surfaceVariant = Color(0xFFF1ECF6)
+)
+private val RoozemanDarkColors = darkColorScheme(
+    primary = Color(0xFFD0BCFF),
+    onPrimary = Color(0xFF381E72),
+    primaryContainer = Color(0xFF4F378B),
+    secondary = Color(0xFF4DD0CB),
+    background = Color(0xFF141218),
+    surface = Color(0xFF1D1B20)
+)
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -79,12 +102,22 @@ fun RoozemanApp() {
     }
 
     MaterialTheme(
-        colorScheme = if (isDark) darkColorScheme() else lightColorScheme()
+        colorScheme = if (isDark) RoozemanDarkColors else RoozemanLightColors
     ) {
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
             val context = LocalContext.current
             val dbHelper = remember { DbHelper(context) }
             val db = remember { dbHelper.writableDatabase }
+
+            val notifPermissionLauncher = rememberLauncherForActivityResult(
+                ActivityResultContracts.RequestPermission()
+            ) {}
+            LaunchedEffect(Unit) {
+                createNotificationChannel(context)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    notifPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                }
+            }
 
             var tasksVersion by remember { mutableStateOf(0) }
             var ideasVersion by remember { mutableStateOf(0) }
@@ -136,9 +169,13 @@ fun RoozemanApp() {
                 if (showAddSheet) {
                     AddSheet(
                         onDismiss = { showAddSheet = false },
-                        onAddTask = { title -> insertTask(db, title); tasksVersion++ },
+                        onAddTask = { title, recurrence, rh, rm ->
+                            val newId = insertTask(db, title, recurrence, rh, rm)
+                            tasksVersion++
+                            if (rh != null && rm != null) scheduleTaskReminder(context, newId, rh, rm)
+                        },
                         onAddIdea = { title -> insertIdea(db, title); ideasVersion++ },
-                        onAddGoal = { title -> insertGoal(db, title); goalsVersion++ },
+                        onAddGoal = { title, recurrence -> insertGoal(db, title, recurrence); goalsVersion++ },
                         onAddNote = { text -> insertNote(db, text); notesVersion++ }
                     )
                 }
@@ -151,9 +188,9 @@ fun RoozemanApp() {
 fun isSystemInDarkTheme(): Boolean {
     return androidx.compose.foundation.isSystemInDarkTheme()
 }
-
 @Composable
 fun HomeScreen(db: android.database.sqlite.SQLiteDatabase, version: Int, onTasksChanged: () -> Unit) {
+    val context = LocalContext.current
     val tasks = remember(version) { loadTasks(db) }
 
     val today = LocalDate.now()
@@ -236,12 +273,36 @@ fun HomeScreen(db: android.database.sqlite.SQLiteDatabase, version: Int, onTasks
                         Checkbox(
                             checked = task.done,
                             onCheckedChange = { checked ->
-                                updateTaskDone(db, task.id, checked)
+                                val newId = updateTaskDone(db, task.id, checked)
+                                if (checked && task.reminderHour != null) {
+                                    cancelTaskReminder(context, task.id)
+                                }
+                                if (newId != null && task.reminderHour != null && task.reminderMinute != null) {
+                                    scheduleTaskReminder(context, newId, task.reminderHour, task.reminderMinute)
+                                }
                                 onTasksChanged()
                             }
                         )
-                        Text(text = task.title, modifier = Modifier.weight(1f))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = task.title)
+                            if (task.recurrence == "monthly" || task.reminderHour != null) {
+                                Row {
+                                    if (task.recurrence == "monthly") {
+                                        Text(text = "🔁 ماهانه", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                    }
+                                    if (task.reminderHour != null) {
+                                        Text(
+                                            text = "⏰ ${"%02d".format(task.reminderHour)}:${"%02d".format(task.reminderMinute ?: 0)}",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
                         TextButton(onClick = {
+                            cancelTaskReminder(context, task.id)
                             deleteTask(db, task.id)
                             onTasksChanged()
                         }) {
@@ -395,12 +456,17 @@ fun GoalsScreen(db: android.database.sqlite.SQLiteDatabase, version: Int, onGoal
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(text = "🎯 ${goal.title}", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Column {
+                            Text(text = "🎯 ${goal.title}", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                            if (goal.recurrence == "monthly") {
+                                Text(text = "🔁 هدف ماهانه", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
                         TextButton(onClick = {
                             deleteGoal(db, goal.id)
                             onGoalsChanged()
                         }) {
-                            Text("✕")
+                           Text("✕")
                         }
                     }
                     Spacer(modifier = Modifier.height(8.dp))
@@ -419,6 +485,7 @@ fun GoalsScreen(db: android.database.sqlite.SQLiteDatabase, version: Int, onGoal
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun IdeasScreen(db: android.database.sqlite.SQLiteDatabase, version: Int, onIdeasChanged: () -> Unit) {
     val ideas = remember(version) { loadIdeas(db) }
@@ -486,23 +553,39 @@ fun IdeasScreen(db: android.database.sqlite.SQLiteDatabase, version: Int, onIdea
             Text(text = "هنوز ایده‌ای ثبت نشده")
         }
         ideas.forEach { idea ->
-            Card(shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(text = "💡 ${idea.title}", fontWeight = FontWeight.Bold)
-                        TextButton(onClick = {
+            key(idea.id) {
+                val dismissState = rememberSwipeToDismissBoxState(
+                    confirmValueChange = { value ->
+                        if (value == SwipeToDismissBoxValue.EndToStart || value == SwipeToDismissBoxValue.StartToEnd) {
                             deleteIdea(db, idea.id)
                             onIdeasChanged()
-                        }) {
-                            Text("✕")
+                            true
+                        } else {
+                            false
                         }
                     }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(text = "${idea.date}   ${idea.tag}", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                )
+                SwipeToDismissBox(
+                    state = dismissState,
+                    backgroundContent = {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(MaterialTheme.colorScheme.errorContainer, RoundedCornerShape(20.dp))
+                                .padding(horizontal = 20.dp),
+                            contentAlignment = Alignment.CenterEnd
+                        ) {
+                            Text("🗑️ حذف", color = MaterialTheme.colorScheme.onErrorContainer, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                ) {
+                    Card(shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(text = "💡 ${idea.title}", fontWeight = FontWeight.Bold)
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(text = "${idea.date}   ${idea.tag}", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
                 }
             }
             Spacer(modifier = Modifier.height(12.dp))
@@ -662,8 +745,8 @@ fun ReportScreen(db: android.database.sqlite.SQLiteDatabase, onBack: () -> Unit)
 
         Card(shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp)) {
-                Text(text = "کارها", fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(4.dp))
+                Text(text = "کارها", fontWeight = FontWeight.Bold) 
+             Spacer(modifier = Modifier.height(4.dp))
                 Text(text = "$doneTasks از ${tasks.size} کار انجام شده")
             }
         }
@@ -840,13 +923,18 @@ fun MoreScreen(
 @Composable
 fun AddSheet(
     onDismiss: () -> Unit,
-    onAddTask: (String) -> Unit,
+    onAddTask: (String, String, Int?, Int?) -> Unit,
     onAddIdea: (String) -> Unit,
-    onAddGoal: (String) -> Unit,
+    onAddGoal: (String, String) -> Unit,
     onAddNote: (String) -> Unit
 ) {
     var step by remember { mutableStateOf("menu") }
     var inputText by remember { mutableStateOf("") }
+    var reminderEnabled by remember { mutableStateOf(false) }
+    var reminderHour by remember { mutableStateOf(9) }
+    var reminderMinute by remember { mutableStateOf(0) }
+    var recurring by remember { mutableStateOf(false) }
+    val ctx = LocalContext.current
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -886,12 +974,100 @@ fun AddSheet(
                     }
                     Spacer(modifier = Modifier.height(20.dp))
                 }
+                "task" -> {
+                    Text(text = "افزودن کار جدید", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = inputText,
+                        onValueChange = { inputText = it },
+                        placeholder = { Text("متن را بنویس...") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = reminderEnabled,
+                            onClick = {
+                                TimePickerDialog(
+                                    ctx,
+                                    { _, h, m -> reminderHour = h; reminderMinute = m; reminderEnabled = true },
+                                    reminderHour, reminderMinute, true
+                                ).show()
+                            },
+                            label = {
+                                Text(
+                                    if (reminderEnabled)
+                                        "⏰ ${"%02d".format(reminderHour)}:${"%02d".format(reminderMinute)}"
+                                    else "⏰ یادآوری"
+                                )
+                            }
+                        )
+                        FilterChip(
+                            selected = recurring,
+                            onClick = { recurring = !recurring },
+                            label = { Text("🔁 تکرار ماهانه") }
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(
+                        onClick = {
+                            if (inputText.isNotBlank()) {
+                                onAddTask(
+                                    inputText,
+                                    if (recurring) "monthly" else "none",
+                                    if (reminderEnabled) reminderHour else null,
+                                    if (reminderEnabled) reminderMinute else null
+                                )
+                                inputText = ""
+                                reminderEnabled = false
+                                recurring = false
+                                step = "menu"
+                                onDismiss()
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("ثبت")
+                    }
+                    Spacer(modifier = Modifier.height(20.dp))
+                }
+                "goal" -> {
+                    Text(text = "افزودن هدف جدید", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = inputText,
+                        onValueChange = { inputText = it },
+                        placeholder = { Text("متن را بنویس...") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    FilterChip(
+                        selected = recurring,
+                        onClick = { recurring = !recurring },
+                        label = { Text("🔁 هدف ماهانه (تکرارشونده)") }
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(
+                        onClick = {
+                            if (inputText.isNotBlank()) {
+                                onAddGoal(inputText, if (recurring) "monthly" else "none")
+                                inputText = ""
+                                recurring = false
+                                step = "menu"
+                                onDismiss()
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("ثبت")
+                    }
+                    Spacer(modifier = Modifier.height(20.dp))
+                }
                 else -> {
                     val title = when (step) {
-                        "task" -> "افزودن کار جدید"
                         "idea" -> "افزودن ایده جدید"
                         "note" -> "افزودن یادداشت جدید"
-                        else -> "افزودن هدف جدید"
+                        else -> "افزودن"
                     }
                     Text(text = title, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                     Spacer(modifier = Modifier.height(12.dp))
@@ -906,9 +1082,7 @@ fun AddSheet(
                         onClick = {
                             if (inputText.isNotBlank()) {
                                 when (step) {
-                                    "task" -> onAddTask(inputText)
                                     "idea" -> onAddIdea(inputText)
-                                    "goal" -> onAddGoal(inputText)
                                     "note" -> onAddNote(inputText)
                                 }
                                 inputText = ""
@@ -946,4 +1120,4 @@ fun RoozemanBottomBar(selected: Int, onSelect: (Int) -> Unit) {
             )
         }
     }
-}
+}   
