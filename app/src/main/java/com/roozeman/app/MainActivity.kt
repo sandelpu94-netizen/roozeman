@@ -130,11 +130,11 @@ fun RoozemanApp() {
 
             val onResetAll = {
                 resetAllData(db)
-                tasksVersion++
-                ideasVersion++
-                goalsVersion++
-                habitsVersion++
-                notesVersion++
+                tasksVersion += 1
+                ideasVersion += 1
+                goalsVersion += 1
+                habitsVersion += 1
+                notesVersion += 1
             }
 
             Scaffold(
@@ -149,16 +149,16 @@ fun RoozemanApp() {
             ) { padding ->
                 Box(modifier = Modifier.padding(padding)) {
                     when (selectedTab) {
-                        0 -> HomeScreen(db, tasksVersion, onTasksChanged = { tasksVersion++ })
+                        0 -> HomeScreen(db, tasksVersion, onTasksChanged = { tasksVersion += 1 })
                         1 -> CalendarScreen()
-                        2 -> GoalsScreen(db, goalsVersion, onGoalsChanged = { goalsVersion++ })
-                        3 -> IdeasScreen(db, ideasVersion, onIdeasChanged = { ideasVersion++ })
+                        2 -> GoalsScreen(db, goalsVersion, onGoalsChanged = { goalsVersion += 1 })
+                        3 -> IdeasScreen(db, ideasVersion, onIdeasChanged = { ideasVersion += 1 })
                         else -> MoreScreen(
                             db = db,
                             habitsVersion = habitsVersion,
-                            onHabitsChanged = { habitsVersion++ },
+                            onHabitsChanged = { habitsVersion += 1 },
                             notesVersion = notesVersion,
-                            onNotesChanged = { notesVersion++ },
+                            onNotesChanged = { notesVersion += 1 },
                             darkModeSetting = darkModeSetting,
                             onDarkModeChange = { darkModeSetting = it },
                             onResetAll = onResetAll
@@ -171,12 +171,12 @@ fun RoozemanApp() {
                         onDismiss = { showAddSheet = false },
                         onAddTask = { title, recurrence, rh, rm ->
                             val newId = insertTask(db, title, recurrence, rh, rm)
-                            tasksVersion++
+                            tasksVersion += 1
                             if (rh != null && rm != null) scheduleTaskReminder(context, newId, rh, rm)
                         },
-                        onAddIdea = { title -> insertIdea(db, title); ideasVersion++ },
-                        onAddGoal = { title, recurrence -> insertGoal(db, title, recurrence); goalsVersion++ },
-                        onAddNote = { text -> insertNote(db, text); notesVersion++ }
+                        onAddIdea = { title -> insertIdea(db, title); ideasVersion += 1 },
+                        onAddGoal = { title, recurrence -> insertGoal(db, title, recurrence); goalsVersion += 1 },
+                        onAddNote = { text -> insertNote(db, text); notesVersion += 1 }
                     )
                 }
             }
