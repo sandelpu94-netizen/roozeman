@@ -241,7 +241,8 @@ fun HomeScreen(db: android.database.sqlite.SQLiteDatabase, version: Int, schedul
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(text = item.time, fontWeight = FontWeight.Medium)
-                        Text(text = item.label)
+                        Text(text = item.label, modifier = Modifier.weight(1f))
+                        TextButton(onClick = { deleteSchedule(db, item.id); onScheduleChanged() }) { Text("✕") }
                     }
                     if (index != schedule.lastIndex) {
                         Spacer(modifier = Modifier.height(10.dp))
@@ -611,7 +612,10 @@ fun HabitsScreen(db: android.database.sqlite.SQLiteDatabase, version: Int, onHab
         habits.forEach { habit ->
             Card(shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text(text = habit.title, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(text = habit.title, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        TextButton(onClick = { deleteHabit(db, habit.id); onHabitsChanged() }) { Text("✕") }
+                    }
                     Spacer(modifier = Modifier.height(10.dp))
                     Row(modifier = Modifier.fillMaxWidth()) {
                         dayLabels.forEachIndexed { index, label ->

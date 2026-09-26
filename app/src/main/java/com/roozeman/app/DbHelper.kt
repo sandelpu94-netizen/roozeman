@@ -202,6 +202,11 @@ fun loadHabits(db: SQLiteDatabase): List<HabitItem> {
     return list
 }
 
+fun deleteHabit(db: SQLiteDatabase, id: Long) {
+    db.delete("habit_logs", "habit_id = ?", arrayOf(id.toString()))
+    db.delete("habits", "id = ?", arrayOf(id.toString()))
+}
+
 fun isHabitDoneOnDate(db: SQLiteDatabase, habitId: Long, date: String): Boolean {
     val cursor = db.rawQuery("SELECT done FROM habit_logs WHERE habit_id=? AND date=?", arrayOf(habitId.toString(), date))
     val result = if (cursor.moveToFirst()) cursor.getInt(0) == 1 else false
