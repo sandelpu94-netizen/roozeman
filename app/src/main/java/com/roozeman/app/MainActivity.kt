@@ -62,7 +62,6 @@ val persianWeekdays = listOf(
 )
 val persianWeekdaysShort = listOf("ش", "ی", "د", "س", "چ", "پ", "ج")
 
-data class ScheduleItem(val time: String, val label: String)
 
 private val RoozemanLightColors = lightColorScheme(
     primary = Color(0xFF6750A4),
@@ -124,6 +123,7 @@ fun RoozemanApp() {
             var goalsVersion by remember { mutableStateOf(0) }
             var habitsVersion by remember { mutableStateOf(0) }
             var notesVersion by remember { mutableStateOf(0) }
+            var scheduleVersion by remember { mutableStateOf(0) }
 
             var showAddSheet by remember { mutableStateOf(false) }
             var selectedTab by remember { mutableStateOf(0) }
@@ -149,7 +149,7 @@ fun RoozemanApp() {
             ) { padding ->
                 Box(modifier = Modifier.padding(padding)) {
                     when (selectedTab) {
-                        0 -> HomeScreen(db, tasksVersion, onTasksChanged = { tasksVersion += 1 })
+                        0 -> HomeScreen(db, tasksVersion, scheduleVersion, onTasksChanged = { tasksVersion += 1 }, onScheduleChanged = { scheduleVersion += 1 })
                         1 -> CalendarScreen()
                         2 -> GoalsScreen(db, goalsVersion, onGoalsChanged = { goalsVersion += 1 })
                         3 -> IdeasScreen(db, ideasVersion, onIdeasChanged = { ideasVersion += 1 })
@@ -176,7 +176,9 @@ fun RoozemanApp() {
                         },
                         onAddIdea = { title -> insertIdea(db, title); ideasVersion += 1 },
                         onAddGoal = { title, recurrence -> insertGoal(db, title, recurrence); goalsVersion += 1 },
-                        onAddNote = { text -> insertNote(db, text); notesVersion += 1 }
+                        onAddNote = { text -> insertNote(db, text); notesVersion += 1 },
+                        onAddSchedule = { time, label -> insertSchedule(db, time, label); scheduleVersion += 1 },
+                        onAddHabit = { title -> insertHabit(db, title); habitsVersion += 1 }
                     )
                 }
             }
@@ -189,7 +191,7 @@ fun isSystemInDarkTheme(): Boolean {
     return androidx.compose.foundation.isSystemInDarkTheme()
 }
 @Composable
-fun HomeScreen(db: android.database.sqlite.SQLiteDatabase, version: Int, onTasksChanged: () -> Unit) {
+fun HomeScreen(db: android.database.sqlite.SQLiteDatabase, version: Int, scheduleVersion: Int, onTasksChanged: () -> Unit, onScheduleChanged: () -> Unit) {
     val context = LocalContext.current
     val tasks = remember(version) { loadTasks(db) }
 
@@ -199,16 +201,8 @@ fun HomeScreen(db: android.database.sqlite.SQLiteDatabase, version: Int, onTasks
     val weekdayName = persianWeekdays[weekdayIndex]
     val monthName = persianMonths[jm - 1]
 
-    val schedule = remember {
-        listOf(
-            ScheduleItem("۰۸:۰۰", "شروع روز"),
-            ScheduleItem("۱۰:۰۰", "کار اصلی"),
-            ScheduleItem("۱۳:۰۰", "ناهار و استراحت"),
-            ScheduleItem("۱۶:۰۰", "مطالعه"),
-            ScheduleItem("۲۰:۰۰", "وقت آزاد")
-        )
-    }
 
+    val schedule = remember(scheduleVersion) { loadSchedule(db) }
     val doneCount = tasks.count { it.done }
     val progress = if (tasks.isNotEmpty()) doneCount.toFloat() / tasks.size else 0f
 
@@ -926,7 +920,9 @@ fun AddSheet(
     onAddTask: (String, String, Int?, Int?) -> Unit,
     onAddIdea: (String) -> Unit,
     onAddGoal: (String, String) -> Unit,
-    onAddNote: (String) -> Unit
+    onAddNote: (String) -> Unit,
+    onAddSchedule: (String, String) -> Unit,
+    onAddHabit: (String) -> Unit
 ) {
     var step by remember { mutableStateOf("menu") }
     var inputText by remember { mutableStateOf("") }
@@ -947,12 +943,12 @@ fun AddSheet(
                         modifier = Modifier.padding(bottom = 12.dp)
                     )
                     val options = listOf(
-                        "🕐 برنامه" to "soon",
+                        "🕐 برنامه" to "schedule",
                         "📋 کار" to "task",
                         "💡 ایده" to "idea",
                         "🎯 هدف" to "goal",
                         "📝 یادداشت" to "note",
-                        "🔥 عادت" to "soon"
+                        "🔥 عادت" to "habit"
                     )
                     options.forEach { (label, target) ->
                         Text(
@@ -1067,6 +1063,8 @@ fun AddSheet(
                     val title = when (step) {
                         "idea" -> "افزودن ایده جدید"
                         "note" -> "افزودن یادداشت جدید"
+                        "schedule" -> "افزودن برنامه (مثال: ۱۸:۰۰ ورزش)"
+                        "habit" -> "افزودن عادت جدید"
                         else -> "افزودن"
                     }
                     Text(text = title, fontWeight = FontWeight.Bold, fontSize = 18.sp)
@@ -1084,6 +1082,11 @@ fun AddSheet(
                                 when (step) {
                                     "idea" -> onAddIdea(inputText)
                                     "note" -> onAddNote(inputText)
+                                    "schedule" -> {
+                                        val parts = inputText.trim().split(" ", limit = 2)
+                                        onAddSchedule(parts.getOrElse(0) { "" }, parts.getOrElse(1) { "" })
+                                    }
+                                    "habit" -> onAddHabit(inputText)
                                 }
                                 inputText = ""
                                 step = "menu"
