@@ -1,3 +1,4 @@
+
 package com.roozeman.app
 
 import android.content.ContentValues
@@ -19,8 +20,9 @@ data class IdeaItem(val id: Long, val title: String, val date: String, val tag: 
 data class GoalItem(val id: Long, val title: String, val progress: Float, val daysLeft: Int, val recurrence: String)
 data class HabitItem(val id: Long, val title: String, val days: List<Boolean>, val streak: Int)
 data class NoteItem(val id: Long, val text: String)
+data class ScheduleItem(val id: Long, val time: String, val label: String)
 
-class DbHelper(context: Context) : SQLiteOpenHelper(context, "roozeman.db", null, 4) {
+class DbHelper(context: Context) : SQLiteOpenHelper(context, "roozeman.db", null, 5) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, done INTEGER, recurrence TEXT DEFAULT 'none', reminderHour INTEGER, reminderMinute INTEGER)")
         db.execSQL("CREATE TABLE ideas (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, date TEXT, tag TEXT)")
@@ -28,6 +30,7 @@ class DbHelper(context: Context) : SQLiteOpenHelper(context, "roozeman.db", null
         db.execSQL("CREATE TABLE habits (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, d0 INTEGER, d1 INTEGER, d2 INTEGER, d3 INTEGER, d4 INTEGER, d5 INTEGER, d6 INTEGER, streak INTEGER)")
         db.execSQL("CREATE TABLE habit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, habit_id INTEGER, date TEXT, done INTEGER)")
         db.execSQL("CREATE TABLE notes (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT)")
+        db.execSQL("CREATE TABLE schedule (id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT, label TEXT)")
 
         db.execSQL("INSERT INTO tasks (title, done, recurrence) VALUES ('انجام کاری که امروز مهم‌تر از همه است', 0, 'none')")
         db.execSQL("INSERT INTO tasks (title, done, recurrence) VALUES ('چک کردن ایمیل‌ها', 1, 'none')")
@@ -42,6 +45,12 @@ class DbHelper(context: Context) : SQLiteOpenHelper(context, "roozeman.db", null
         db.execSQL("INSERT INTO ideas (title, date, tag) VALUES ('پیشنهاد ویژگی جدید برای اپ', '۱۰ شهریور', '💡 ایده')")
 
         db.execSQL("INSERT INTO habits (title, d0, d1, d2, d3, d4, d5, d6, streak) VALUES ('ورزش', 0, 0, 0, 0, 0, 0, 0, 0)")
+
+        db.execSQL("INSERT INTO schedule (time, label) VALUES ('۰۸:۰۰', 'شروع روز')")
+        db.execSQL("INSERT INTO schedule (time, label) VALUES ('۱۰:۰۰', 'کار اصلی')")
+        db.execSQL("INSERT INTO schedule (time, label) VALUES ('۱۳:۰۰', 'ناهار و استراحت')")
+        db.execSQL("INSERT INTO schedule (time, label) VALUES ('۱۶:۰۰', 'مطالعه')")
+        db.execSQL("INSERT INTO schedule (time, label) VALUES ('۲۰:۰۰', 'وقت آزاد')")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -57,6 +66,20 @@ class DbHelper(context: Context) : SQLiteOpenHelper(context, "roozeman.db", null
             safeAlter(db, "ALTER TABLE tasks ADD COLUMN reminderMinute INTEGER")
             safeAlter(db, "ALTER TABLE goals ADD COLUMN recurrence TEXT DEFAULT 'none'")
             db.execSQL("CREATE TABLE IF NOT EXISTS habit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, habit_id INTEGER, date TEXT, done INTEGER)")
+        }
+        if (oldVersion < 5) {
+            db.execSQL("CREATE TABLE IF NOT EXISTS schedule (id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT, label TEXT)")
+            val cursor = db.rawQuery("SELECT COUNT(*) FROM schedule", null)
+            cursor.moveToFirst()
+            val count = cursor.getInt(0)
+            cursor.close()
+            if (count == 0) {
+                db.execSQL("INSERT INTO schedule (time, label) VALUES ('۰۸:۰۰', 'شروع روز')")
+                db.execSQL("INSERT INTO schedule (time, label) VALUES ('۱۰:۰۰', 'کار اصلی')")
+                db.execSQL("INSERT INTO schedule (time, label) VALUES ('۱۳:۰۰', 'ناهار و استراحت')")
+                db.execSQL("INSERT INTO schedule (time, label) VALUES ('۱۶:۰۰', 'مطالعه')")
+                db.execSQL("INSERT INTO schedule (time, label) VALUES ('۲۰:۰۰', 'وقت آزاد')")
+            }
         }
     }
 
@@ -205,6 +228,13 @@ fun loadHabits(db: SQLiteDatabase): List<HabitItem> {
 fun deleteHabit(db: SQLiteDatabase, id: Long) {
     db.delete("habit_logs", "habit_id = ?", arrayOf(id.toString()))
     db.delete("habits", "id = ?", arrayOf(id.toString()))
+fun insertHabit(db: SQLiteDatabase, title: String): Long {
+    val values = ContentValues()
+    values.put("title", title)
+    values.put("d0", 0); values.put("d1", 0); values.put("d2", 0); values.put("d3", 0)
+    values.put("d4", 0); values.put("d5", 0); values.put("d6", 0)
+    values.put("streak", 0)
+    return db.insert("habits", null, values)
 }
 
 fun isHabitDoneOnDate(db: SQLiteDatabase, habitId: Long, date: String): Boolean {
@@ -272,6 +302,27 @@ fun insertNote(db: SQLiteDatabase, text: String) {
 
 fun deleteNote(db: SQLiteDatabase, id: Long) {
     db.delete("notes", "id = ?", arrayOf(id.toString()))
+}
+
+fun loadSchedule(db: SQLiteDatabase): List<ScheduleItem> {
+    val list = mutableListOf<ScheduleItem>()
+    val cursor = db.rawQuery("SELECT id, time, label FROM schedule ORDER BY time ASC", null)
+    while (cursor.moveToNext()) {
+        list.add(ScheduleItem(cursor.getLong(0), cursor.getString(1), cursor.getString(2)))
+    }
+    cursor.close()
+    return list
+}
+
+fun insertSchedule(db: SQLiteDatabase, time: String, label: String): Long {
+    val values = ContentValues()
+    values.put("time", time)
+    values.put("label", label)
+    return db.insert("schedule", null, values)
+}
+
+fun deleteSchedule(db: SQLiteDatabase, id: Long) {
+    db.delete("schedule", "id = ?", arrayOf(id.toString()))
 }
 
 fun resetAllData(db: SQLiteDatabase) {
