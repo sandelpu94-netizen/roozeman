@@ -1,4 +1,4 @@
-cat > app/src/main/java/com/roozeman/app/DbHelper.kt << 'EOF'
+
 package com.roozeman.app
 
 import android.content.ContentValues
@@ -330,4 +330,3 @@ fun resetAllData(db: SQLiteDatabase) {
     db.execSQL("DELETE FROM habit_logs")
     db.execSQL("UPDATE habits SET d0=0, d1=0, d2=0, d3=0, d4=0, d5=0, d6=0, streak=0")
 }
-EOF
