@@ -130,7 +130,7 @@ fun RoozemanApp() {
 
             val onResetAll = {
                 resetAllData(db)
-                tasksVersion += 1
+                tasksVersion += 1; TaskWidgetProvider.updateAll(context)
                 ideasVersion += 1
                 goalsVersion += 1
                 habitsVersion += 1
@@ -149,7 +149,7 @@ fun RoozemanApp() {
             ) { padding ->
                 Box(modifier = Modifier.padding(padding)) {
                     when (selectedTab) {
-                        0 -> HomeScreen(db, tasksVersion, scheduleVersion, onTasksChanged = { tasksVersion += 1 }, onScheduleChanged = { scheduleVersion += 1 })
+                        0 -> HomeScreen(db, tasksVersion, scheduleVersion, onTasksChanged = { tasksVersion += 1; TaskWidgetProvider.updateAll(context) }, onScheduleChanged = { scheduleVersion += 1 })
                         1 -> CalendarScreen()
                         2 -> GoalsScreen(db, goalsVersion, onGoalsChanged = { goalsVersion += 1 })
                         3 -> IdeasScreen(db, ideasVersion, onIdeasChanged = { ideasVersion += 1 })
@@ -171,7 +171,7 @@ fun RoozemanApp() {
                         onDismiss = { showAddSheet = false },
                         onAddTask = { title, recurrence, rh, rm ->
                             val newId = insertTask(db, title, recurrence, rh, rm)
-                            tasksVersion += 1
+                            tasksVersion += 1; TaskWidgetProvider.updateAll(context)
                             if (rh != null && rm != null) scheduleTaskReminder(context, newId, rh, rm)
                         },
                         onAddIdea = { title -> insertIdea(db, title); ideasVersion += 1 },
