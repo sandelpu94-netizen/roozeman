@@ -228,6 +228,7 @@ fun loadHabits(db: SQLiteDatabase): List<HabitItem> {
 fun deleteHabit(db: SQLiteDatabase, id: Long) {
     db.delete("habit_logs", "habit_id = ?", arrayOf(id.toString()))
     db.delete("habits", "id = ?", arrayOf(id.toString()))
+}
 fun insertHabit(db: SQLiteDatabase, title: String): Long {
     val values = ContentValues()
     values.put("title", title)
