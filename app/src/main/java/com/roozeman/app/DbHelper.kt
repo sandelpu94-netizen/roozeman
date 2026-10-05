@@ -1,4 +1,4 @@
-
+cat > app/src/main/java/com/roozeman/app/DbHelper.kt << 'EOF'
 package com.roozeman.app
 
 import android.content.ContentValues
@@ -7,6 +7,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteException
 import android.database.sqlite.SQLiteOpenHelper
 import java.time.LocalDate
+import java.time.temporal.ChronoUnit
 
 data class TaskItem(
     val id: Long,
@@ -17,20 +18,20 @@ data class TaskItem(
     val reminderMinute: Int?
 )
 data class IdeaItem(val id: Long, val title: String, val date: String, val tag: String)
-data class GoalItem(val id: Long, val title: String, val progress: Float, val daysLeft: Int, val recurrence: String)
+data class GoalItem(val id: Long, val title: String, val progress: Float, val daysLeft: Int, val recurrence: String, val targetDate: String?)
 data class HabitItem(val id: Long, val title: String, val days: List<Boolean>, val streak: Int)
 data class NoteItem(val id: Long, val text: String)
-data class ScheduleItem(val id: Long, val time: String, val label: String)
+data class ScheduleItem(val id: Long, val time: String, val label: String, val done: Boolean)
 
-class DbHelper(context: Context) : SQLiteOpenHelper(context, "roozeman.db", null, 5) {
+class DbHelper(context: Context) : SQLiteOpenHelper(context, "roozeman.db", null, 6) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, done INTEGER, recurrence TEXT DEFAULT 'none', reminderHour INTEGER, reminderMinute INTEGER)")
         db.execSQL("CREATE TABLE ideas (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, date TEXT, tag TEXT)")
-        db.execSQL("CREATE TABLE goals (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, progress REAL, daysLeft INTEGER, recurrence TEXT DEFAULT 'none')")
+        db.execSQL("CREATE TABLE goals (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, progress REAL, daysLeft INTEGER, recurrence TEXT DEFAULT 'none', targetDate TEXT)")
         db.execSQL("CREATE TABLE habits (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, d0 INTEGER, d1 INTEGER, d2 INTEGER, d3 INTEGER, d4 INTEGER, d5 INTEGER, d6 INTEGER, streak INTEGER)")
         db.execSQL("CREATE TABLE habit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, habit_id INTEGER, date TEXT, done INTEGER)")
         db.execSQL("CREATE TABLE notes (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT)")
-        db.execSQL("CREATE TABLE schedule (id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT, label TEXT)")
+        db.execSQL("CREATE TABLE schedule (id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT, label TEXT, done INTEGER DEFAULT 0)")
 
         db.execSQL("INSERT INTO tasks (title, done, recurrence) VALUES ('انجام کاری که امروز مهم‌تر از همه است', 0, 'none')")
         db.execSQL("INSERT INTO tasks (title, done, recurrence) VALUES ('چک کردن ایمیل‌ها', 1, 'none')")
@@ -80,6 +81,10 @@ class DbHelper(context: Context) : SQLiteOpenHelper(context, "roozeman.db", null
                 db.execSQL("INSERT INTO schedule (time, label) VALUES ('۱۶:۰۰', 'مطالعه')")
                 db.execSQL("INSERT INTO schedule (time, label) VALUES ('۲۰:۰۰', 'وقت آزاد')")
             }
+        }
+        if (oldVersion < 6) {
+            safeAlter(db, "ALTER TABLE schedule ADD COLUMN done INTEGER DEFAULT 0")
+            safeAlter(db, "ALTER TABLE goals ADD COLUMN targetDate TEXT")
         }
     }
 
@@ -174,12 +179,18 @@ fun deleteIdea(db: SQLiteDatabase, id: Long) {
 
 fun loadGoals(db: SQLiteDatabase): List<GoalItem> {
     val list = mutableListOf<GoalItem>()
-    val cursor = db.rawQuery("SELECT id, title, progress, daysLeft, recurrence FROM goals ORDER BY id ASC", null)
+    val cursor = db.rawQuery("SELECT id, title, progress, daysLeft, recurrence, targetDate FROM goals ORDER BY id ASC", null)
     while (cursor.moveToNext()) {
+        val targetDate = if (cursor.isNull(5)) null else cursor.getString(5)
+        val daysLeft = if (targetDate != null) {
+            ChronoUnit.DAYS.between(LocalDate.now(), LocalDate.parse(targetDate)).toInt()
+        } else {
+            cursor.getInt(3)
+        }
         list.add(
             GoalItem(
                 cursor.getLong(0), cursor.getString(1), cursor.getFloat(2),
-                cursor.getInt(3), cursor.getString(4) ?: "none"
+                daysLeft, cursor.getString(4) ?: "none", targetDate
             )
         )
     }
@@ -198,6 +209,38 @@ fun insertGoal(db: SQLiteDatabase, title: String, recurrence: String = "none") {
 
 fun deleteGoal(db: SQLiteDatabase, id: Long) {
     db.delete("goals", "id = ?", arrayOf(id.toString()))
+}
+
+fun updateGoalProgress(db: SQLiteDatabase, id: Long, progress: Float) {
+    val clamped = progress.coerceIn(0f, 1f)
+    if (clamped >= 1f) {
+        val cursor = db.rawQuery("SELECT recurrence, targetDate FROM goals WHERE id=?", arrayOf(id.toString()))
+        if (cursor.moveToFirst()) {
+            val recurrence = cursor.getString(0) ?: "none"
+            val targetDate = if (cursor.isNull(1)) null else cursor.getString(1)
+            cursor.close()
+            if (recurrence == "monthly") {
+                val values = ContentValues()
+                values.put("progress", 0f)
+                if (targetDate != null) {
+                    values.put("targetDate", LocalDate.parse(targetDate).plusMonths(1).toString())
+                }
+                db.update("goals", values, "id = ?", arrayOf(id.toString()))
+                return
+            }
+        } else {
+            cursor.close()
+        }
+    }
+    val values = ContentValues()
+    values.put("progress", clamped)
+    db.update("goals", values, "id = ?", arrayOf(id.toString()))
+}
+
+fun setGoalTargetDate(db: SQLiteDatabase, id: Long, dateIso: String) {
+    val values = ContentValues()
+    values.put("targetDate", dateIso)
+    db.update("goals", values, "id = ?", arrayOf(id.toString()))
 }
 
 private fun todayPersianWeekIndex(): Int {
@@ -229,6 +272,7 @@ fun deleteHabit(db: SQLiteDatabase, id: Long) {
     db.delete("habit_logs", "habit_id = ?", arrayOf(id.toString()))
     db.delete("habits", "id = ?", arrayOf(id.toString()))
 }
+
 fun insertHabit(db: SQLiteDatabase, title: String): Long {
     val values = ContentValues()
     values.put("title", title)
@@ -307,9 +351,9 @@ fun deleteNote(db: SQLiteDatabase, id: Long) {
 
 fun loadSchedule(db: SQLiteDatabase): List<ScheduleItem> {
     val list = mutableListOf<ScheduleItem>()
-    val cursor = db.rawQuery("SELECT id, time, label FROM schedule ORDER BY time ASC", null)
+    val cursor = db.rawQuery("SELECT id, time, label, done FROM schedule ORDER BY time ASC", null)
     while (cursor.moveToNext()) {
-        list.add(ScheduleItem(cursor.getLong(0), cursor.getString(1), cursor.getString(2)))
+        list.add(ScheduleItem(cursor.getLong(0), cursor.getString(1), cursor.getString(2), cursor.getInt(3) == 1))
     }
     cursor.close()
     return list
@@ -319,7 +363,14 @@ fun insertSchedule(db: SQLiteDatabase, time: String, label: String): Long {
     val values = ContentValues()
     values.put("time", time)
     values.put("label", label)
+    values.put("done", 0)
     return db.insert("schedule", null, values)
+}
+
+fun updateScheduleDone(db: SQLiteDatabase, id: Long, done: Boolean) {
+    val values = ContentValues()
+    values.put("done", if (done) 1 else 0)
+    db.update("schedule", values, "id = ?", arrayOf(id.toString()))
 }
 
 fun deleteSchedule(db: SQLiteDatabase, id: Long) {
@@ -333,4 +384,6 @@ fun resetAllData(db: SQLiteDatabase) {
     db.execSQL("DELETE FROM notes")
     db.execSQL("DELETE FROM habit_logs")
     db.execSQL("UPDATE habits SET d0=0, d1=0, d2=0, d3=0, d4=0, d5=0, d6=0, streak=0")
+    db.execSQL("UPDATE schedule SET done=0")
 }
+EOF
