@@ -430,8 +430,8 @@ fun CalendarScreen() {
     }
 }
 
-@Composable
 fun GoalsScreen(db: android.database.sqlite.SQLiteDatabase, version: Int, onGoalsChanged: () -> Unit) {
+    val context = LocalContext.current
     val goals = remember(version) { loadGoals(db) }
 
     Column(
@@ -472,8 +472,43 @@ fun GoalsScreen(db: android.database.sqlite.SQLiteDatabase, version: Int, onGoal
                         modifier = Modifier.fillMaxWidth().height(8.dp),
                         strokeCap = androidx.compose.ui.graphics.StrokeCap.Round
                     )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    LinearProgressIndicator(
+                        progress = { goal.progress },
+                        modifier = Modifier.fillMaxWidth().height(8.dp),
+                        strokeCap = androidx.compose.ui.graphics.StrokeCap.Round
+                    )
                     Spacer(modifier = Modifier.height(6.dp))
-                    Text(text = "${(goal.progress * 100).toInt()}٪  •  ${goal.daysLeft} روز تا هدف", fontSize = 13.sp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "${(goal.progress * 100).toInt()}٪  •  " + (if (goal.targetDate != null) "${goal.daysLeft} روز تا هدف" else "بدون تاریخ هدف"),
+                            fontSize = 13.sp
+                        )
+                        Row {
+                            TextButton(onClick = {
+                                updateGoalProgress(db, goal.id, goal.progress - 0.1f)
+                                onGoalsChanged()
+                            }) { Text("−") }
+                            TextButton(onClick = {
+                                updateGoalProgress(db, goal.id, goal.progress + 0.1f)
+                                onGoalsChanged()
+                            }) { Text("+") }
+                        }
+                    }
+                    TextButton(onClick = {
+                        val today = LocalDate.now()
+                        DatePickerDialog(context, { _, y, m, d ->
+                            val picked = LocalDate.of(y, m + 1, d)
+                            setGoalTargetDate(db, goal.id, picked.toString())
+                            onGoalsChanged()
+                        }, today.year, today.monthValue - 1, today.dayOfMonth).show()
+                    }) {
+                        Text("📅 " + (goal.targetDate ?: "تعیین تاریخ هدف"))
+                    }
                 }
             }
             Spacer(modifier = Modifier.height(12.dp))
