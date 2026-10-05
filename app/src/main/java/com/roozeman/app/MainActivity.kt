@@ -2,6 +2,7 @@ package com.roozeman.app
 
 import android.app.Activity
 import android.app.TimePickerDialog
+import android.app.DatePickerDialog
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
@@ -240,7 +241,8 @@ fun HomeScreen(db: android.database.sqlite.SQLiteDatabase, version: Int, schedul
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text(text = item.time, fontWeight = FontWeight.Medium)
+                        Checkbox(checked = item.done, onCheckedChange = { checked -> updateScheduleDone(db, item.id, checked); onScheduleChanged() })
+                        Text(text = item.time, fontWeight = FontWeight.Medium, textDecoration = if (item.done) androidx.compose.ui.text.style.TextDecoration.LineThrough else androidx.compose.ui.text.style.TextDecoration.None)
                         Text(text = item.label, modifier = Modifier.weight(1f))
                         TextButton(onClick = { deleteSchedule(db, item.id); onScheduleChanged() }) { Text("✕") }
                     }
