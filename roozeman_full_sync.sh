@@ -1,3 +1,858 @@
+#!/bin/bash
+# اسکریپت همگام‌سازی کامل روزمن — همه فایل‌هایی که تا الان ساختیم رو تمیز و یکجا می‌نویسه
+# از ریشه‌ی ریپو اجرا کن: bash roozeman_full_sync.sh
+set -e
+
+echo "۱) بازنویسی کامل AndroidManifest.xml"
+cat > app/src/main/AndroidManifest.xml << 'EOF'
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+        <activity
+            android:name="MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action
+                    android:name="android.intent.action.MAIN" />
+
+                <category
+                    android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <receiver android:name=".ReminderReceiver" android:exported="false" />
+        <receiver android:name=".TaskActionReceiver" android:exported="false" />
+        <receiver android:name=".BootReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+        <receiver android:name=".TaskWidgetProvider" android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/task_widget_info" />
+        </receiver>
+    </application>
+</manifest>
+EOF
+
+echo "۲) بازنویسی DbHelper.kt (v6)"
+cat > app/src/main/java/com/roozeman/app/DbHelper.kt << 'EOF'
+package com.roozeman.app
+
+import android.content.ContentValues
+import android.content.Context
+import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteException
+import android.database.sqlite.SQLiteOpenHelper
+import java.time.LocalDate
+import java.time.temporal.ChronoUnit
+
+data class TaskItem(
+    val id: Long,
+    val title: String,
+    val done: Boolean,
+    val recurrence: String,
+    val reminderHour: Int?,
+    val reminderMinute: Int?
+)
+data class IdeaItem(val id: Long, val title: String, val date: String, val tag: String)
+data class GoalItem(val id: Long, val title: String, val progress: Float, val daysLeft: Int, val recurrence: String, val targetDate: String?)
+data class HabitItem(val id: Long, val title: String, val days: List<Boolean>, val streak: Int)
+data class NoteItem(val id: Long, val text: String)
+data class ScheduleItem(val id: Long, val time: String, val label: String, val done: Boolean)
+
+class DbHelper(context: Context) : SQLiteOpenHelper(context, "roozeman.db", null, 6) {
+    override fun onCreate(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, done INTEGER, recurrence TEXT DEFAULT 'none', reminderHour INTEGER, reminderMinute INTEGER)")
+        db.execSQL("CREATE TABLE ideas (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, date TEXT, tag TEXT)")
+        db.execSQL("CREATE TABLE goals (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, progress REAL, daysLeft INTEGER, recurrence TEXT DEFAULT 'none', targetDate TEXT)")
+        db.execSQL("CREATE TABLE habits (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, d0 INTEGER, d1 INTEGER, d2 INTEGER, d3 INTEGER, d4 INTEGER, d5 INTEGER, d6 INTEGER, streak INTEGER)")
+        db.execSQL("CREATE TABLE habit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, habit_id INTEGER, date TEXT, done INTEGER)")
+        db.execSQL("CREATE TABLE notes (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT)")
+        db.execSQL("CREATE TABLE schedule (id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT, label TEXT, done INTEGER DEFAULT 0)")
+
+        db.execSQL("INSERT INTO tasks (title, done, recurrence) VALUES ('انجام کاری که امروز مهم‌تر از همه است', 0, 'none')")
+        db.execSQL("INSERT INTO tasks (title, done, recurrence) VALUES ('چک کردن ایمیل‌ها', 1, 'none')")
+        db.execSQL("INSERT INTO tasks (title, done, recurrence) VALUES ('۳۰ دقیقه پیاده‌روی', 1, 'none')")
+        db.execSQL("INSERT INTO tasks (title, done, recurrence) VALUES ('مطالعه ۲۰ دقیقه', 0, 'none')")
+
+        db.execSQL("INSERT INTO goals (title, progress, daysLeft, recurrence) VALUES ('یادگیری زبان انگلیسی', 0.6, 12, 'none')")
+        db.execSQL("INSERT INTO goals (title, progress, daysLeft, recurrence) VALUES ('ورزش منظم', 0.3, 45, 'monthly')")
+        db.execSQL("INSERT INTO goals (title, progress, daysLeft, recurrence) VALUES ('مطالعه ۱۲ کتاب امسال', 0.4, 90, 'none')")
+
+        db.execSQL("INSERT INTO ideas (title, date, tag) VALUES ('طراحی یک محصول جدید', '۱۳ شهریور', '⭐ مهم')")
+        db.execSQL("INSERT INTO ideas (title, date, tag) VALUES ('پیشنهاد ویژگی جدید برای اپ', '۱۰ شهریور', '💡 ایده')")
+
+        db.execSQL("INSERT INTO habits (title, d0, d1, d2, d3, d4, d5, d6, streak) VALUES ('ورزش', 0, 0, 0, 0, 0, 0, 0, 0)")
+
+        db.execSQL("INSERT INTO schedule (time, label) VALUES ('۰۸:۰۰', 'شروع روز')")
+        db.execSQL("INSERT INTO schedule (time, label) VALUES ('۱۰:۰۰', 'کار اصلی')")
+        db.execSQL("INSERT INTO schedule (time, label) VALUES ('۱۳:۰۰', 'ناهار و استراحت')")
+        db.execSQL("INSERT INTO schedule (time, label) VALUES ('۱۶:۰۰', 'مطالعه')")
+        db.execSQL("INSERT INTO schedule (time, label) VALUES ('۲۰:۰۰', 'وقت آزاد')")
+    }
+
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) {
+            db.execSQL("CREATE TABLE IF NOT EXISTS habits (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, d0 INTEGER, d1 INTEGER, d2 INTEGER, d3 INTEGER, d4 INTEGER, d5 INTEGER, d6 INTEGER, streak INTEGER)")
+        }
+        if (oldVersion < 3) {
+            db.execSQL("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT)")
+        }
+        if (oldVersion < 4) {
+            safeAlter(db, "ALTER TABLE tasks ADD COLUMN recurrence TEXT DEFAULT 'none'")
+            safeAlter(db, "ALTER TABLE tasks ADD COLUMN reminderHour INTEGER")
+            safeAlter(db, "ALTER TABLE tasks ADD COLUMN reminderMinute INTEGER")
+            safeAlter(db, "ALTER TABLE goals ADD COLUMN recurrence TEXT DEFAULT 'none'")
+            db.execSQL("CREATE TABLE IF NOT EXISTS habit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, habit_id INTEGER, date TEXT, done INTEGER)")
+        }
+        if (oldVersion < 5) {
+            db.execSQL("CREATE TABLE IF NOT EXISTS schedule (id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT, label TEXT)")
+            val cursor = db.rawQuery("SELECT COUNT(*) FROM schedule", null)
+            cursor.moveToFirst()
+            val count = cursor.getInt(0)
+            cursor.close()
+            if (count == 0) {
+                db.execSQL("INSERT INTO schedule (time, label) VALUES ('۰۸:۰۰', 'شروع روز')")
+                db.execSQL("INSERT INTO schedule (time, label) VALUES ('۱۰:۰۰', 'کار اصلی')")
+                db.execSQL("INSERT INTO schedule (time, label) VALUES ('۱۳:۰۰', 'ناهار و استراحت')")
+                db.execSQL("INSERT INTO schedule (time, label) VALUES ('۱۶:۰۰', 'مطالعه')")
+                db.execSQL("INSERT INTO schedule (time, label) VALUES ('۲۰:۰۰', 'وقت آزاد')")
+            }
+        }
+        if (oldVersion < 6) {
+            safeAlter(db, "ALTER TABLE schedule ADD COLUMN done INTEGER DEFAULT 0")
+            safeAlter(db, "ALTER TABLE goals ADD COLUMN targetDate TEXT")
+        }
+    }
+
+    private fun safeAlter(db: SQLiteDatabase, sql: String) {
+        try {
+            db.execSQL(sql)
+        } catch (e: SQLiteException) {
+        }
+    }
+}
+
+fun loadTasks(db: SQLiteDatabase): List<TaskItem> {
+    val list = mutableListOf<TaskItem>()
+    val cursor = db.rawQuery("SELECT id, title, done, recurrence, reminderHour, reminderMinute FROM tasks ORDER BY id ASC", null)
+    while (cursor.moveToNext()) {
+        list.add(
+            TaskItem(
+                cursor.getLong(0),
+                cursor.getString(1),
+                cursor.getInt(2) == 1,
+                cursor.getString(3) ?: "none",
+                if (cursor.isNull(4)) null else cursor.getInt(4),
+                if (cursor.isNull(5)) null else cursor.getInt(5)
+            )
+        )
+    }
+    cursor.close()
+    return list
+}
+
+fun insertTask(db: SQLiteDatabase, title: String, recurrence: String = "none", reminderHour: Int? = null, reminderMinute: Int? = null): Long {
+    val values = ContentValues()
+    values.put("title", title)
+    values.put("done", 0)
+    values.put("recurrence", recurrence)
+    if (reminderHour != null) values.put("reminderHour", reminderHour) else values.putNull("reminderHour")
+    if (reminderMinute != null) values.put("reminderMinute", reminderMinute) else values.putNull("reminderMinute")
+    return db.insert("tasks", null, values)
+}
+
+fun updateTaskDone(db: SQLiteDatabase, id: Long, done: Boolean): Long? {
+    val values = ContentValues()
+    values.put("done", if (done) 1 else 0)
+    db.update("tasks", values, "id = ?", arrayOf(id.toString()))
+
+    if (!done) return null
+
+    val cursor = db.rawQuery("SELECT title, recurrence, reminderHour, reminderMinute FROM tasks WHERE id=?", arrayOf(id.toString()))
+    var newId: Long? = null
+    if (cursor.moveToFirst()) {
+        val recurrence = cursor.getString(1) ?: "none"
+        if (recurrence == "monthly") {
+            val title = cursor.getString(0)
+            val rh = if (cursor.isNull(2)) null else cursor.getInt(2)
+            val rm = if (cursor.isNull(3)) null else cursor.getInt(3)
+            cursor.close()
+            newId = insertTask(db, title, recurrence, rh, rm)
+        } else {
+            cursor.close()
+        }
+    } else {
+        cursor.close()
+    }
+    return newId
+}
+
+fun deleteTask(db: SQLiteDatabase, id: Long) {
+    db.delete("tasks", "id = ?", arrayOf(id.toString()))
+}
+
+fun loadIdeas(db: SQLiteDatabase): List<IdeaItem> {
+    val list = mutableListOf<IdeaItem>()
+    val cursor = db.rawQuery("SELECT id, title, date, tag FROM ideas ORDER BY id DESC", null)
+    while (cursor.moveToNext()) {
+        list.add(IdeaItem(cursor.getLong(0), cursor.getString(1), cursor.getString(2), cursor.getString(3)))
+    }
+    cursor.close()
+    return list
+}
+
+fun insertIdea(db: SQLiteDatabase, title: String) {
+    val values = ContentValues()
+    values.put("title", title)
+    values.put("date", "امروز")
+    values.put("tag", "💡 ایده")
+    db.insert("ideas", null, values)
+}
+
+fun deleteIdea(db: SQLiteDatabase, id: Long) {
+    db.delete("ideas", "id = ?", arrayOf(id.toString()))
+}
+
+fun loadGoals(db: SQLiteDatabase): List<GoalItem> {
+    val list = mutableListOf<GoalItem>()
+    val cursor = db.rawQuery("SELECT id, title, progress, daysLeft, recurrence, targetDate FROM goals ORDER BY id ASC", null)
+    while (cursor.moveToNext()) {
+        val targetDate = if (cursor.isNull(5)) null else cursor.getString(5)
+        val daysLeft = if (targetDate != null) {
+            ChronoUnit.DAYS.between(LocalDate.now(), LocalDate.parse(targetDate)).toInt()
+        } else {
+            cursor.getInt(3)
+        }
+        list.add(
+            GoalItem(
+                cursor.getLong(0), cursor.getString(1), cursor.getFloat(2),
+                daysLeft, cursor.getString(4) ?: "none", targetDate
+            )
+        )
+    }
+    cursor.close()
+    return list
+}
+
+fun insertGoal(db: SQLiteDatabase, title: String, recurrence: String = "none") {
+    val values = ContentValues()
+    values.put("title", title)
+    values.put("progress", 0f)
+    values.put("daysLeft", 0)
+    values.put("recurrence", recurrence)
+    db.insert("goals", null, values)
+}
+
+fun deleteGoal(db: SQLiteDatabase, id: Long) {
+    db.delete("goals", "id = ?", arrayOf(id.toString()))
+}
+
+fun updateGoalProgress(db: SQLiteDatabase, id: Long, progress: Float) {
+    val clamped = progress.coerceIn(0f, 1f)
+    if (clamped >= 1f) {
+        val cursor = db.rawQuery("SELECT recurrence, targetDate FROM goals WHERE id=?", arrayOf(id.toString()))
+        if (cursor.moveToFirst()) {
+            val recurrence = cursor.getString(0) ?: "none"
+            val targetDate = if (cursor.isNull(1)) null else cursor.getString(1)
+            cursor.close()
+            if (recurrence == "monthly") {
+                val values = ContentValues()
+                values.put("progress", 0f)
+                if (targetDate != null) {
+                    values.put("targetDate", LocalDate.parse(targetDate).plusMonths(1).toString())
+                }
+                db.update("goals", values, "id = ?", arrayOf(id.toString()))
+                return
+            }
+        } else {
+            cursor.close()
+        }
+    }
+    val values = ContentValues()
+    values.put("progress", clamped)
+    db.update("goals", values, "id = ?", arrayOf(id.toString()))
+}
+
+fun setGoalTargetDate(db: SQLiteDatabase, id: Long, dateIso: String) {
+    val values = ContentValues()
+    values.put("targetDate", dateIso)
+    db.update("goals", values, "id = ?", arrayOf(id.toString()))
+}
+
+private fun todayPersianWeekIndex(): Int {
+    return (LocalDate.now().dayOfWeek.value + 1) % 7
+}
+
+fun loadHabits(db: SQLiteDatabase): List<HabitItem> {
+    val list = mutableListOf<HabitItem>()
+    val cursor = db.rawQuery("SELECT id, title FROM habits ORDER BY id ASC", null)
+    val idsTitles = mutableListOf<Pair<Long, String>>()
+    while (cursor.moveToNext()) idsTitles.add(cursor.getLong(0) to cursor.getString(1))
+    cursor.close()
+
+    val today = LocalDate.now()
+    val todayIdx = todayPersianWeekIndex()
+
+    for ((id, title) in idsTitles) {
+        val days = (0..6).map { i ->
+            val date = today.minusDays((todayIdx - i).toLong())
+            isHabitDoneOnDate(db, id, date.toString())
+        }
+        val streak = computeHabitStreak(db, id)
+        list.add(HabitItem(id, title, days, streak))
+    }
+    return list
+}
+
+fun deleteHabit(db: SQLiteDatabase, id: Long) {
+    db.delete("habit_logs", "habit_id = ?", arrayOf(id.toString()))
+    db.delete("habits", "id = ?", arrayOf(id.toString()))
+}
+
+fun insertHabit(db: SQLiteDatabase, title: String): Long {
+    val values = ContentValues()
+    values.put("title", title)
+    values.put("d0", 0); values.put("d1", 0); values.put("d2", 0); values.put("d3", 0)
+    values.put("d4", 0); values.put("d5", 0); values.put("d6", 0)
+    values.put("streak", 0)
+    return db.insert("habits", null, values)
+}
+
+fun isHabitDoneOnDate(db: SQLiteDatabase, habitId: Long, date: String): Boolean {
+    val cursor = db.rawQuery("SELECT done FROM habit_logs WHERE habit_id=? AND date=?", arrayOf(habitId.toString(), date))
+    val result = if (cursor.moveToFirst()) cursor.getInt(0) == 1 else false
+    cursor.close()
+    return result
+}
+
+fun updateHabitDay(db: SQLiteDatabase, id: Long, dayIndex: Int, value: Boolean) {
+    val today = LocalDate.now()
+    val todayIdx = todayPersianWeekIndex()
+    val date = today.minusDays((todayIdx - dayIndex).toLong()).toString()
+
+    val cursor = db.rawQuery("SELECT id FROM habit_logs WHERE habit_id=? AND date=?", arrayOf(id.toString(), date))
+    if (cursor.moveToFirst()) {
+        val logId = cursor.getLong(0)
+        cursor.close()
+        db.execSQL("UPDATE habit_logs SET done=? WHERE id=?", arrayOf(if (value) 1 else 0, logId))
+    } else {
+        cursor.close()
+        val values = ContentValues()
+        values.put("habit_id", id)
+        values.put("date", date)
+        values.put("done", if (value) 1 else 0)
+        db.insert("habit_logs", null, values)
+    }
+}
+
+fun computeHabitStreak(db: SQLiteDatabase, habitId: Long): Int {
+    val cursor = db.rawQuery("SELECT date, done FROM habit_logs WHERE habit_id=?", arrayOf(habitId.toString()))
+    val map = HashMap<String, Boolean>()
+    while (cursor.moveToNext()) {
+        map[cursor.getString(0)] = cursor.getInt(1) == 1
+    }
+    cursor.close()
+
+    var streak = 0
+    var d = LocalDate.now()
+    if (map[d.toString()] != true) {
+        d = d.minusDays(1)
+    }
+    while (map[d.toString()] == true) {
+        streak++
+        d = d.minusDays(1)
+    }
+    return streak
+}
+
+fun loadNotes(db: SQLiteDatabase): List<NoteItem> {
+    val list = mutableListOf<NoteItem>()
+    val cursor = db.rawQuery("SELECT id, text FROM notes ORDER BY id DESC", null)
+    while (cursor.moveToNext()) {
+        list.add(NoteItem(cursor.getLong(0), cursor.getString(1)))
+    }
+    cursor.close()
+    return list
+}
+
+fun insertNote(db: SQLiteDatabase, text: String) {
+    val values = ContentValues()
+    values.put("text", text)
+    db.insert("notes", null, values)
+}
+
+fun deleteNote(db: SQLiteDatabase, id: Long) {
+    db.delete("notes", "id = ?", arrayOf(id.toString()))
+}
+
+fun loadSchedule(db: SQLiteDatabase): List<ScheduleItem> {
+    val list = mutableListOf<ScheduleItem>()
+    val cursor = db.rawQuery("SELECT id, time, label, done FROM schedule ORDER BY time ASC", null)
+    while (cursor.moveToNext()) {
+        list.add(ScheduleItem(cursor.getLong(0), cursor.getString(1), cursor.getString(2), cursor.getInt(3) == 1))
+    }
+    cursor.close()
+    return list
+}
+
+fun insertSchedule(db: SQLiteDatabase, time: String, label: String): Long {
+    val values = ContentValues()
+    values.put("time", time)
+    values.put("label", label)
+    values.put("done", 0)
+    return db.insert("schedule", null, values)
+}
+
+fun updateScheduleDone(db: SQLiteDatabase, id: Long, done: Boolean) {
+    val values = ContentValues()
+    values.put("done", if (done) 1 else 0)
+    db.update("schedule", values, "id = ?", arrayOf(id.toString()))
+}
+
+fun deleteSchedule(db: SQLiteDatabase, id: Long) {
+    db.delete("schedule", "id = ?", arrayOf(id.toString()))
+}
+
+fun resetAllData(db: SQLiteDatabase) {
+    db.execSQL("DELETE FROM tasks")
+    db.execSQL("DELETE FROM ideas")
+    db.execSQL("DELETE FROM goals")
+    db.execSQL("DELETE FROM notes")
+    db.execSQL("DELETE FROM habit_logs")
+    db.execSQL("UPDATE habits SET d0=0, d1=0, d2=0, d3=0, d4=0, d5=0, d6=0, streak=0")
+    db.execSQL("UPDATE schedule SET done=0")
+}
+EOF
+
+echo "۳) بازنویسی NotificationHelper.kt"
+cat > app/src/main/java/com/roozeman/app/NotificationHelper.kt << 'EOF'
+package com.roozeman.app
+
+import android.app.AlarmManager
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import androidx.core.app.NotificationCompat
+import java.util.Calendar
+
+const val CHANNEL_ID = "roozeman_reminders"
+
+fun createNotificationChannel(context: Context) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val channel = NotificationChannel(
+            CHANNEL_ID, "یادآوری‌های روزمن", NotificationManager.IMPORTANCE_HIGH
+        )
+        channel.description = "یادآوری کارها و برنامه‌های روزانه"
+        val manager = context.getSystemService(NotificationManager::class.java)
+        manager?.createNotificationChannel(channel)
+    }
+}
+
+fun showTaskNotification(context: Context, taskId: Long, title: String) {
+    val doneIntent = Intent(context, TaskActionReceiver::class.java).apply {
+        action = "com.roozeman.app.ACTION_TASK_DONE"
+        putExtra("taskId", taskId)
+    }
+    val donePendingIntent = PendingIntent.getBroadcast(
+        context, taskId.toInt(), doneIntent,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+
+    val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+        .setSmallIcon(android.R.drawable.ic_dialog_info)
+        .setContentTitle("یادآوری کار")
+        .setContentText(title)
+        .setPriority(NotificationCompat.PRIORITY_HIGH)
+        .addAction(android.R.drawable.checkbox_on_background, "انجام شد", donePendingIntent)
+        .setAutoCancel(true)
+        .build()
+
+    val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    manager.notify(taskId.toInt(), notification)
+}
+
+fun scheduleTaskReminder(context: Context, taskId: Long, hour: Int, minute: Int) {
+    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+    val intent = Intent(context, ReminderReceiver::class.java).apply {
+        putExtra("taskId", taskId)
+    }
+    val pendingIntent = PendingIntent.getBroadcast(
+        context, taskId.toInt(), intent,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+    val calendar = Calendar.getInstance().apply {
+        set(Calendar.HOUR_OF_DAY, hour)
+        set(Calendar.MINUTE, minute)
+        set(Calendar.SECOND, 0)
+        if (before(Calendar.getInstance())) {
+            add(Calendar.DAY_OF_YEAR, 1)
+        }
+    }
+    try {
+        alarmManager.setExactAndAllowWhileIdle(
+            AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent
+        )
+    } catch (e: SecurityException) {
+        alarmManager.set(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent)
+    }
+}
+
+fun cancelTaskReminder(context: Context, taskId: Long) {
+    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+    val intent = Intent(context, ReminderReceiver::class.java)
+    val pendingIntent = PendingIntent.getBroadcast(
+        context, taskId.toInt(), intent,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+    alarmManager.cancel(pendingIntent)
+}
+EOF
+
+echo "۴) بازنویسی ReminderReceiver.kt"
+cat > app/src/main/java/com/roozeman/app/ReminderReceiver.kt << 'EOF'
+package com.roozeman.app
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.app.NotificationManager
+
+class ReminderReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val taskId = intent.getLongExtra("taskId", -1)
+        if (taskId == -1L) return
+        val db = DbHelper(context).readableDatabase
+        val cursor = db.rawQuery("SELECT title, done FROM tasks WHERE id=?", arrayOf(taskId.toString()))
+        if (cursor.moveToFirst()) {
+            val title = cursor.getString(0)
+            val done = cursor.getInt(1) == 1
+            cursor.close()
+            if (!done) {
+                createNotificationChannel(context)
+                showTaskNotification(context, taskId, title)
+            }
+        } else {
+            cursor.close()
+        }
+    }
+}
+
+class TaskActionReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == "com.roozeman.app.ACTION_TASK_DONE") {
+            val taskId = intent.getLongExtra("taskId", -1)
+            if (taskId == -1L) return
+            val db = DbHelper(context).writableDatabase
+            updateTaskDone(db, taskId, true)
+            TaskWidgetProvider.updateAll(context)
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.cancel(taskId.toInt())
+        }
+    }
+}
+EOF
+
+echo "۵) بازنویسی BootReceiver.kt"
+cat > app/src/main/java/com/roozeman/app/BootReceiver.kt << 'EOF'
+package com.roozeman.app
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+
+class BootReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
+            val db = DbHelper(context).readableDatabase
+            val cursor = db.rawQuery(
+                "SELECT id, reminderHour, reminderMinute FROM tasks WHERE done=0 AND reminderHour IS NOT NULL",
+                null
+            )
+            while (cursor.moveToNext()) {
+                val id = cursor.getLong(0)
+                val hour = cursor.getInt(1)
+                val minute = cursor.getInt(2)
+                scheduleTaskReminder(context, id, hour, minute)
+            }
+            cursor.close()
+        }
+    }
+}
+EOF
+
+echo "۶) بازنویسی TaskWidgetProvider.kt"
+cat > app/src/main/java/com/roozeman/app/TaskWidgetProvider.kt << 'EOF'
+package com.roozeman.app
+
+import android.app.PendingIntent
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProvider
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.view.View
+import android.widget.RemoteViews
+
+class TaskWidgetProvider : AppWidgetProvider() {
+    companion object {
+        const val ACTION_TOGGLE = "com.roozeman.app.ACTION_WIDGET_TOGGLE_TASK"
+        const val EXTRA_TASK_ID = "taskId"
+        val rowIds = intArrayOf(R.id.widget_task_1, R.id.widget_task_2, R.id.widget_task_3, R.id.widget_task_4, R.id.widget_task_5)
+
+        fun updateAll(context: Context) {
+            val manager = AppWidgetManager.getInstance(context)
+            val ids = manager.getAppWidgetIds(ComponentName(context, TaskWidgetProvider::class.java))
+            if (ids.isNotEmpty()) {
+                TaskWidgetProvider().onUpdate(context, manager, ids)
+            }
+        }
+    }
+
+    override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
+        val db = DbHelper(context).readableDatabase
+        val tasks = loadTasks(db).filter { !it.done }.take(5)
+
+        for (widgetId in appWidgetIds) {
+            val views = RemoteViews(context.packageName, R.layout.task_widget)
+
+            for (i in rowIds.indices) {
+                if (i < tasks.size) {
+                    val task = tasks[i]
+                    views.setTextViewText(rowIds[i], "☐ " + task.title)
+                    views.setViewVisibility(rowIds[i], View.VISIBLE)
+
+                    val toggleIntent = Intent(context, TaskWidgetProvider::class.java).apply {
+                        action = ACTION_TOGGLE
+                        putExtra(EXTRA_TASK_ID, task.id)
+                    }
+                    val pendingIntent = PendingIntent.getBroadcast(
+                        context, task.id.toInt(), toggleIntent,
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                    )
+                    views.setOnClickPendingIntent(rowIds[i], pendingIntent)
+                } else {
+                    views.setViewVisibility(rowIds[i], View.GONE)
+                }
+            }
+
+            views.setViewVisibility(R.id.widget_empty, if (tasks.isEmpty()) View.VISIBLE else View.GONE)
+
+            val openAppIntent = Intent(context, MainActivity::class.java)
+            val openAppPendingIntent = PendingIntent.getActivity(
+                context, 0, openAppIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            views.setOnClickPendingIntent(R.id.widget_title, openAppPendingIntent)
+
+            appWidgetManager.updateAppWidget(widgetId, views)
+        }
+    }
+
+    override fun onReceive(context: Context, intent: Intent) {
+        super.onReceive(context, intent)
+        if (intent.action == ACTION_TOGGLE) {
+            val taskId = intent.getLongExtra(EXTRA_TASK_ID, -1)
+            if (taskId != -1L) {
+                val db = DbHelper(context).writableDatabase
+                updateTaskDone(db, taskId, true)
+                updateAll(context)
+            }
+        }
+    }
+}
+EOF
+
+echo "۷) بازنویسی res/xml/task_widget_info.xml"
+mkdir -p app/src/main/res/xml
+cat > app/src/main/res/xml/task_widget_info.xml << 'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="250dp"
+    android:minHeight="180dp"
+    android:updatePeriodMillis="1800000"
+    android:initialLayout="@layout/task_widget"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen" />
+EOF
+
+echo "۸) بازنویسی res/layout/task_widget.xml"
+mkdir -p app/src/main/res/layout
+cat > app/src/main/res/layout/task_widget.xml << 'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#FFFAF8FC"
+    android:padding="12dp">
+
+    <TextView
+        android:id="@+id/widget_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="📋 کارهای امروز"
+        android:textStyle="bold"
+        android:textSize="16sp"
+        android:textColor="#FF1D1B20"
+        android:gravity="right" />
+
+    <TextView
+        android:id="@+id/widget_task_1"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:textSize="14sp"
+        android:textColor="#FF1D1B20"
+        android:gravity="right"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/widget_task_2"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="14sp"
+        android:textColor="#FF1D1B20"
+        android:gravity="right"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/widget_task_3"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="14sp"
+        android:textColor="#FF1D1B20"
+        android:gravity="right"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/widget_task_4"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="14sp"
+        android:textColor="#FF1D1B20"
+        android:gravity="right"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/widget_task_5"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="14sp"
+        android:textColor="#FF1D1B20"
+        android:gravity="right"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/widget_empty"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:text="کاری باقی نمانده 🎉"
+        android:textSize="14sp"
+        android:textColor="#FF1D1B20"
+        android:gravity="right"
+        android:visibility="gone" />
+</LinearLayout>
+EOF
+
+echo "۹) بازنویسی app/build.gradle.kts (امضای ثابت)"
+cat > app/build.gradle.kts << 'EOF'
+import java.util.Properties
+import java.io.FileInputStream
+
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+}
+
+val releasePropsFile = rootProject.file("release.properties")
+val releaseProps = Properties()
+if (releasePropsFile.exists()) {
+    releaseProps.load(FileInputStream(releasePropsFile))
+}
+
+android {
+    namespace = "com.roozeman.app"
+    compileSdk = 34
+
+    defaultConfig {
+        applicationId = "com.roozeman.app"
+        minSdk = 24
+        targetSdk = 34
+        versionCode = 1
+        versionName = "1.0"
+    }
+
+    signingConfigs {
+        create("release") {
+            if (releasePropsFile.exists()) {
+                storeFile = rootProject.file(releaseProps.getProperty("storeFile"))
+                storePassword = releaseProps.getProperty("storePassword")
+                keyAlias = releaseProps.getProperty("keyAlias")
+                keyPassword = releaseProps.getProperty("keyPassword")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
+        }
+        debug {
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
+    buildFeatures {
+        compose = true
+    }
+
+    composeOptions {
+        kotlinCompilerExtensionVersion = "1.5.10"
+    }
+}
+
+dependencies {
+    implementation(platform("androidx.compose:compose-bom:2024.06.00"))
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.activity:activity-compose:1.9.0")
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.2")
+}
+EOF
+
+echo "۱۰) بازنویسی کامل MainActivity.kt (همه قابلیت‌ها با هم: تیک برنامه، اهداف واقعی، ویجت)"
+cat > app/src/main/java/com/roozeman/app/MainActivity.kt << 'MAINEOF'
 package com.roozeman.app
 
 import android.app.Activity
@@ -1181,3 +2036,7 @@ fun RoozemanBottomBar(selected: Int, onSelect: (Int) -> Unit) {
         }
     }
 }
+MAINEOF
+
+echo "✅ همه‌ی فایل‌ها با موفقیت و یکجا بازنویسی شدند."
+echo "حالا: git add . && git commit -m \"full clean sync of all files\" && git push"

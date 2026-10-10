@@ -32,6 +32,7 @@ class TaskActionReceiver : BroadcastReceiver() {
             if (taskId == -1L) return
             val db = DbHelper(context).writableDatabase
             updateTaskDone(db, taskId, true)
+            TaskWidgetProvider.updateAll(context)
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.cancel(taskId.toInt())
         }
